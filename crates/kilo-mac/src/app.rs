@@ -303,7 +303,37 @@ fn fetch(client: &Client, route: &Route) -> kilo_core::Result<Page> {
         }
         Route::Explore => parse::browse(&client.browse("FEmusic_explore", None)?),
         Route::Library => parse::browse(&client.browse("FEmusic_liked_playlists", None)?),
-        Route::Browse { id, params } => parse::browse(&client.browse(id, params.as_deref())?),
+        Route::Browse { id, params } => {
+            let mut page = parse::browse(&client.browse(id, params.as_deref())?)?;
+            // Long playlists come ~100 tracks at a time: fetch the rest, up
+            // to 2,000 tracks (a few hundred KB of models).
+            for _ in 0..20 {
+                let Some((index, token)) = page.sections.iter().enumerate().find_map(|(i, s)| match s {
+                    Section::List { continuation: Some(t), .. } => Some((i, t.clone())),
+                    _ => None,
+                }) else {
+                    break;
+                };
+                let more = client.continuation(&token).and_then(|j| parse::browse(&j)).ok();
+                let (extra, next) = more
+                    .and_then(|m| {
+                        m.sections.into_iter().find_map(|s| match s {
+                            Section::List { entries, continuation, .. } => Some((entries, continuation)),
+                            _ => None,
+                        })
+                    })
+                    .unwrap_or_default();
+                let done = extra.is_empty();
+                if let Section::List { entries, continuation, .. } = &mut page.sections[index] {
+                    entries.extend(extra);
+                    *continuation = if done { None } else { next };
+                }
+                if done {
+                    break;
+                }
+            }
+            Ok(page)
+        }
         Route::Search(q) => parse::search(&client.search(q, None)?),
     }
 }
