@@ -1,0 +1,15 @@
+[package]
+name = "kilo-ui-bench"
+description = "Bench: memory of a YouTube Music-like window in native AppKit (used to find costly system controls)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+kilo-probe = { path = "../kilo-probe" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+block2 = "0.6.2"

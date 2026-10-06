@@ -33,6 +33,8 @@ impl PlayerProcess {
                     None => on_event(Event::Error(format!("unparsable helper message: {line}"))),
                 }
             }
+            // Its stdout closed: the helper is gone (quit, crashed or killed).
+            on_event(Event::Error("helper exited".into()));
         })?;
         Ok(PlayerProcess { child, stdin })
     }

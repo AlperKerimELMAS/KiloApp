@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Kilo</string>
+  <key>CFBundleDisplayName</key><string>Kilo</string>
+  <!-- WebKit keys the sign-in cookie store by this; must match paths::BUNDLE_ID. -->
+  <key>CFBundleIdentifier</key><string>io.github.alperkerimelmas.kilo</string>
+  <key>CFBundleExecutable</key><string>Kilo</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticTermination</key><false/>
+  <key>NSHumanReadableCopyright</key><string>Kilo is an unofficial client, not affiliated with YouTube or Google.</string>
+</dict>
+</plist>

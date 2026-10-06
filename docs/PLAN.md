@@ -28,7 +28,7 @@ included (on macOS that also means WebKit's XPC services).
 
 | State | Target | Status (macOS) |
 |---|---|---|
-| Window open, idle | ≤ 40 MB Retina, ≤ 22 MB at 1× | UI not built yet |
+| Window open, idle | ≤ 40 MB Retina, ≤ 22 MB at 1× | **37–40 MB measured** (Home loaded, Retina, 0% CPU) |
 | Playing, everything included | ≤ 125 MB | **113–118 MB measured** |
 | Paused for more than a few minutes | main process only | **2.3 MB measured** (helper killed) |
 
@@ -151,6 +151,64 @@ Also measured:
 - WebKit's Suspend scheduling policy doesn't suspend a page that has played
   media.
 
+## The macOS app (v0.1, 2026-10-07)
+
+`crates/kilo-mac` builds `Kilo.app` (`packaging/macos/bundle.sh --install`).
+The app is a native AppKit UI with no web engine. The same binary also runs
+as the player helper and as the sign-in window.
+
+**Features:**
+- Home, Explore, Library, search, and album, playlist and artist pages.
+- Sign-in through Google's own page, opened in a separate helper.
+- A queue that keeps going with each track's radio when it runs out.
+- Play/Shuffle buttons.
+- Media keys and Control Center routed through Kilo's queue.
+- Music keeps playing when the window is closed.
+
+**Memory, measured with Home loaded, Retina, 1240×820 window:**
+
+| Process | Footprint |
+|---|---|
+| Kilo (the UI) | 36–38 MB |
+| SetStoreUpdateService (every macOS app gets one) | 2.2 MB |
+| **Total, not playing** | **≈ 40 MB** |
+| **Total, playing** (adds the player helper) | **≈ 150 MB** |
+
+For comparison, the YouTube Music PWA in Chrome uses about 1.1 GB.
+
+How it gets there, each step measured:
+- **Native AppKit, not Slint.** The same window measured 27 MB in AppKit
+  versus 84 MB with Slint's software renderer (about 5 full-window buffers)
+  and 171 MB with its GPU renderer.
+- **No `NSSlider`.** On macOS 27 it starts Apple's Metal shader compiler
+  service, which costs 40 MB, plus about 5 MB in-process. Kilo's sliders are
+  two plain layers (`ui/bar.rs`).
+- **A focus target, not an auto-focused search field.** When the window
+  becomes key, AppKit focuses the search field, and a focused text field
+  starts macOS's AutoFill service (11 MB). An invisible view takes focus
+  instead (`FocusSink`).
+- **Lazy pages.** Pages are laid out by hand with no Auto Layout. Only blocks
+  within half a screen of the view exist, and thumbnails are attached only
+  while visible. This took the UI from 61 MB to 37 MB.
+- **Images:**
+  - Requested from the server at exact pixel size.
+  - Cached on disk, capped at 64 MB.
+  - Decoded off the main thread by ImageIO straight to a `CGImage`.
+  - Shown as layer contents, so there's no copy.
+  - At most 8 MB of decoded images is kept beyond what's on screen.
+- **Small dependencies.** The OS's TLS (`native-tls`) instead of bundling
+  rustls, and parsers that deserialize only the fields Kilo shows (sub-ms per
+  page).
+
+**Size:** the binary is 1.4 MB and `Kilo.app` is 2.3 MB (1 MB of that is the
+icon).
+
+**Developer switches** (`crates/kilo-mac/src/debug.rs`):
+- `KILO_SNAPSHOT=path` renders the window to PNG, with no Screen Recording
+  permission needed.
+- `KILO_OPEN=search:q` or `browse:ID` opens that page.
+- `KILO_NO_ACTIVATE=1` launches without taking focus.
+
 ## Architecture
 
 ```
@@ -200,14 +258,19 @@ login helper: a visible web view for Google sign-in, then exits
 
 ## Next steps
 
-1. **UI renderer bake-off:** the main process's budget is the remaining
-   unknown.
-2. **Windows (WebView2) and Linux (WebKitGTK) helpers,** measured on real
-   machines. WebView2 has a public memory-target API to try.
-3. **OS media controls:** check what WKWebView's own Now Playing integration
-   does in the helper, and route media keys through Kilo.
-4. **Verify** that plays from the helper show up in YouTube Music history.
-5. **Measure** pear-desktop and Kaset on the same track.
+1. **Now Playing view:** big art plus Up next / Lyrics / Related tabs, and a
+   queue panel.
+2. **Account actions:** like and dislike, add to playlist, and loading the
+   rest of long playlists.
+3. **Window closed:** measure memory with the UI fully torn down while
+   playing.
+4. **Windows and Linux front ends,** over `kilo-core` and `kilo-player`:
+   - Windows: Win32/Direct2D with a WebView2 helper. WebView2 has a public
+     memory-target API.
+   - Linux: GTK or similar, with a WebKitGTK helper.
+   - Measure both on real machines.
+5. **Distribution:** Developer ID signing and notarization.
+6. **Verify** that plays from the helper show up in YouTube Music history.
 
 ## Tools
 

@@ -68,6 +68,14 @@ const BRIDGE: &str = r#"(() => {
     }
   };
   new MutationObserver(attach).observe(document, { childList: true, subtree: true });
+  // Media keys and Control Center: next/previous belong to Kilo's queue, not
+  // to the mobile site's own autoplay.
+  if (navigator.mediaSession) {
+    const ms = navigator.mediaSession, set = ms.setActionHandler.bind(ms);
+    const ours = { nexttrack: () => post('next'), previoustrack: () => post('previous') };
+    ms.setActionHandler = (action, handler) => set(action, ours[action] || handler);
+    for (const [action, handler] of Object.entries(ours)) { try { set(action, handler); } catch (e) {} }
+  }
   const p = () => player || document.querySelector('#movie_player');
   window.__kilo = {
     load(id, start) { p().loadVideoById(id, start); },
@@ -349,6 +357,8 @@ fn on_page_message(msg: &str) {
             emit(&Event::AdShowing);
         }
         "error" => emit(&Event::Error(rest.to_owned())),
+        "next" => emit(&Event::Next),
+        "previous" => emit(&Event::Previous),
         "playing" | "paused" | "buffering" | "ended" => {
             let mut w = rest.split(' ');
             let seconds = w.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);

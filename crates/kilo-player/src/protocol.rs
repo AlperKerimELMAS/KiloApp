@@ -32,6 +32,10 @@ pub enum Event {
     /// An ad showed up, which means the account isn't Premium. The helper
     /// pauses, and never plays ads unseen.
     AdShowing,
+    /// The "next" media key or Control Center button.
+    Next,
+    /// The "previous" media key or Control Center button.
+    Previous,
     Error(String),
 }
 
@@ -109,6 +113,8 @@ impl Event {
             Event::Ended(p) => pos("ended", p),
             Event::SignedOut => "signed-out".into(),
             Event::AdShowing => "ad".into(),
+            Event::Next => "next".into(),
+            Event::Previous => "previous".into(),
             Event::Error(msg) => format!("error {}", msg.replace('\n', " ")),
         }
     }
@@ -130,6 +136,8 @@ impl Event {
             "ended" => Event::Ended(pos()?),
             "signed-out" => Event::SignedOut,
             "ad" => Event::AdShowing,
+            "next" => Event::Next,
+            "previous" => Event::Previous,
             "error" => Event::Error(rest.to_owned()),
             _ => return None,
         })
@@ -159,6 +167,8 @@ mod tests {
             Event::Ended(p),
             Event::SignedOut,
             Event::AdShowing,
+            Event::Next,
+            Event::Previous,
             Event::Error("media failed".into()),
         ] {
             assert_eq!(Event::parse(&e.encode()), Some(e));
