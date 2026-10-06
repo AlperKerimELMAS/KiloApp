@@ -1,0 +1,9 @@
+[package]
+name = "kilo-probe"
+description = "Samples a process tree's memory and CPU using the numbers OS task managers show"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Deliberately dependency-free: platform APIs are declared by hand in src/sys/.
+[dependencies]
