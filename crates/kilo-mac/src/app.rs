@@ -225,6 +225,7 @@ fn start(session: Session) {
                 if let Some(route) = crate::debug::open_route() {
                     go(route);
                 }
+                crate::debug::run_scenario();
             }
             None => show_error("Couldn't reach YouTube Music. Check your connection."),
         },
@@ -536,6 +537,29 @@ fn play_playlist(playlist_id: String) {
             }
         },
     );
+}
+
+/// Plays a song by id, queued with its radio (as YouTube Music does when a
+/// single song is started).
+pub fn play_video(video_id: String) {
+    let Some(Some(client)) = with(|a| a.client.clone()) else { return };
+    net::run(
+        net::Pool::Api,
+        move || client.next(&video_id, None).and_then(|j| kilo_core::parse::up_next(&j)).map(|e| (e, video_id)),
+        |result| {
+            if let Ok((entries, id)) = result {
+                start_queue(Queue::from_entries(&entries, &id));
+            }
+        },
+    );
+}
+
+pub fn close_window() {
+    with(|a| a.shell.window.close());
+}
+
+pub fn reopen_window() {
+    show_window();
 }
 
 fn start_queue(queue: Queue) {

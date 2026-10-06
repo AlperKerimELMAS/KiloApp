@@ -3,6 +3,9 @@
 //!   to `/path/shot-N.png` (no Screen Recording permission needed).
 //! - `KILO_OPEN=search:QUERY` or `browse:ID`: open that page after Home.
 //! - `KILO_NO_ACTIVATE=1`: don't bring the app to the front on launch.
+//! - `KILO_SCENARIO=play:ID,wait:90,close,wait:60,pause,wait:330`: a scripted
+//!   session for measurements; each step is logged to stderr with the time
+//!   since launch.
 
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -94,4 +97,56 @@ fn render(window: &NSWindow, path: &str) {
             eprintln!("kilo: snapshot written to {path}");
         }
     }
+}
+
+fn launched() -> &'static std::time::Instant {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now)
+}
+
+/// Marks process start (call first thing in `main`).
+pub fn mark_launch() {
+    launched();
+}
+
+fn log(step: &str) {
+    eprintln!("[{:7.1}s] {step}", launched().elapsed().as_secs_f64());
+}
+
+/// Runs `KILO_SCENARIO`, if set, once the app is signed in and ready.
+pub fn run_scenario() {
+    let Ok(script) = std::env::var("KILO_SCENARIO") else { return };
+    let steps: Vec<String> = script.split(',').map(str::to_owned).collect();
+    step(steps, 0);
+}
+
+fn step(steps: Vec<String>, i: usize) {
+    let Some(cmd) = steps.get(i).cloned() else {
+        log("scenario done");
+        return;
+    };
+    log(&cmd);
+    let (name, arg) = cmd.split_once(':').unwrap_or((&cmd, ""));
+    let delay = match name {
+        "play" => {
+            crate::app::play_video(arg.to_owned());
+            0.0
+        }
+        "pause" => {
+            crate::app::play_pause();
+            0.0
+        }
+        "close" => {
+            crate::app::close_window();
+            0.0
+        }
+        "open" => {
+            crate::app::reopen_window();
+            0.0
+        }
+        "wait" => arg.parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    };
+    let when = dispatch2::DispatchTime::NOW.time((delay * 1e9) as i64);
+    let _ = dispatch2::DispatchQueue::main().after(when, move || step(steps, i + 1));
 }

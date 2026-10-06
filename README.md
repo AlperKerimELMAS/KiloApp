@@ -30,4 +30,5 @@ Kilo is an unofficial client, not affiliated with YouTube or Google.
 | `kilo-probe` | Measures memory and CPU like the OS task managers do |
 | `kilo-spike-web`, `kilo-ui-bench` | Measurement labs behind the numbers in `docs/PLAN.md` |
 
-See `docs/PLAN.md` for the design and every measurement behind it.
+See `docs/COMPARISON.md` for the measured comparison with YouTube Music in Chrome,
+and `docs/PLAN.md` for the design and every measurement behind it.

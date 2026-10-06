@@ -20,6 +20,7 @@ mod ui;
 
 #[cfg(target_os = "macos")]
 fn main() {
+    debug::mark_launch();
     match std::env::args().nth(1).as_deref() {
         Some("--player-helper") => kilo_player::run_helper(),
         Some("--login-helper") => login::run(),
