@@ -1,4 +1,4 @@
-//! Dev tool: `dump <cookies.binarycookies> <home|explore|library|liked|browse ID|search QUERY|next VIDEO_ID>`
+//! Dev tool: `dump <cookies.binarycookies> <home|explore|library|liked|browse ID|search QUERY|next VIDEO_ID|raw ENDPOINT JSON>`
 //! prints the raw JSON response, for checking parsers against live data.
 
 use kilo_core::auth::{Session, parse_binary_cookies};
@@ -24,6 +24,7 @@ fn main() {
         "cont" => client.continuation(&args[2]),
         "search" => client.search(&args[2], None),
         "next" => client.next(&args[2], None),
+        "raw" => client.raw(&args[2], &args[3]),
         other => panic!("unknown request {other}"),
     }
     .expect("request");

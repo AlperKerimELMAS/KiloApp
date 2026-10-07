@@ -6,8 +6,8 @@ session). For depth:
 - `docs/PLAN.md`: design and every measurement.
 - `docs/COMPARISON.md`: the measured comparison with Chrome.
 
-**Last updated:** 2026-10-07 · **Version:** 0.1 · **Branch:** `main` (no remote
-yet) · 5 commits
+**Last updated:** 2026-10-07 (efficiency pass) · **Version:** 0.2 ·
+**Branch:** `main` (no remote yet)
 
 ---
 
@@ -86,15 +86,37 @@ inspired by Spotifast, a native Rust Spotify client that claims 100–250 MB.
    - **Creating views for whole pages cost about 24 MB.** Pages now use
      hand-made frame layout, and only blocks within half a screen of view
      exist.
-6. **Final comparison** (`docs/COMPARISON.md`):
+6. **Comparison** (`docs/COMPARISON.md`; Kilo after the efficiency pass in
+   item 7):
 
    | | Chrome | Kilo |
    |---|---|---|
-   | Playing | 1,088 MB | **153 MB** |
-   | Paused 5+ minutes | | **34 MB, 0% CPU** |
-   | CPU while playing | 8.9% | 8.9% (same) |
-   | Data while playing | 1.2 MB/min | 1.9 MB/min (+59%, the 144p video) |
-   | On disk | 1.4 GB | 2.3 MB |
+   | Playing | 1,088 MB | **147.5 MB** |
+   | Window open, not playing | | **31 MB** |
+   | Window closed / paused 5+ minutes | | **27–31 MB, 0% CPU** |
+   | CPU while playing | 8.9% | 8.2% |
+   | Data while playing a song | 1.2 MB/min | about 1.9 MB/min (mostly audio; not fully attributed) |
+   | Data while playing a music video | | 1.8 MB/min (its song version; was 3.0) |
+   | On disk | 1.4 GB | 2.4 MB |
+
+7. **Efficiency pass (v0.2, 2026-10-07),** every step measured (details in
+   `docs/PLAN.md`, "Efficiency pass"):
+   - **The video track:** m.youtube.com always streams one, and hiding it
+     doesn't stop WebKit decoding it. music.youtube.com streams audio only
+     but costs 398 MB. So Kilo plays a music video's **song version**
+     whenever there is one, as YouTube Music's Song/Video switch does: a
+     song's "video" is a 144×144 still, 7% of the bytes, against 38% for a
+     music video (−41% data).
+   - **Images were held twice** (a `CGImage` as layer contents gets copied).
+     They're now decoded into IOSurfaces, and cached ones nothing shows are
+     purgeable, so they don't count toward the footprint.
+   - **Closing the window now releases it** (it used to free almost
+     nothing), and the progress timer stops whenever the window isn't
+     visible.
+   - **Less network:** "up next" answers carry a field mask (800 KB → 110 KB
+     of JSON), Home and long playlists load as you scroll, thumbnails are
+     q75 JPEG or WebP (33–55% smaller), the daily config read stops after
+     64 KB, and HTTP buffers are 16 KB instead of 128 KB.
 
 ## 4. Architecture
 
@@ -107,9 +129,9 @@ Kilo.app/Contents/MacOS/Kilo  (one binary, three roles)
 
 | Crate | Role |
 |---|---|
-| `kilo-core` (portable) | `http.rs` (ureq on the OS's TLS via native-tls), `auth.rs` (reads WebKit's cookie file, builds the request signature YouTube's web client uses), `client.rs` (API calls: browse, continuation, search, next, page config cached 24 h in `~/Library/Application Support/Kilo/innertube.txt`), `parse/` (serde structs naming only the fields Kilo shows, no JSON tree, under 2 ms per page), `model.rs` (Page, Section::{Cards, List, Text}, Entry, Target, Thumb with exact-size URLs), `queue.rs` |
+| `kilo-core` (portable) | `http.rs` (ureq on the OS's TLS via native-tls), `auth.rs` (reads WebKit's cookie file, builds the request signature YouTube's web client uses), `client.rs` (API calls: browse, continuation, search, next, `next_single` for a track's song version, page config cached 24 h in `~/Library/Application Support/Kilo/innertube.txt`; "up next" requests carry a field mask), `parse/` (serde structs naming only the fields Kilo shows, no JSON tree, under 2 ms per page; the same structs generate the field mask), `model.rs` (Page, Section::{Cards, List, Text}, Entry, Target, Thumb with exact-size URLs), `queue.rs` |
 | `kilo-player` | `protocol.rs`: commands `load <id> <start>`, `play`, `pause`, `seek`, `volume`, `quit`; events `ready`, `playing`/`paused`/`buffering`/`ended <t> <dur> <id>`, `signed-out`, `ad`, `next`, `previous`, `error`. `host.rs`: spawn, send, and emit `error helper exited` when it dies. `helper/mac.rs`: the WKWebView setup, the page bridge, ad and unexpected-video guards, media-key routing. `main.rs`: a scripted test session. |
-| `kilo-mac` | `app.rs` (state, navigation, sign-in, queue, player control, idle shutdown), `ui/` (`mod.rs` helpers and views, `page.rs` lazy pages, `shell.rs` window, sidebar, player bar and menus, `bar.rs` slider), `images.rs` (disk cache + ImageIO decode + 8 MB LRU), `net.rs` (two small worker pools with main-thread completions), `login.rs`, `paths.rs`, `debug.rs` (developer switches) |
+| `kilo-mac` | `app.rs` (state, navigation, sign-in, queue, player control, idle shutdown; the window exists only while open; pages and long lists load as they scroll, and a queue started from a long list takes the rest as it arrives), `ui/` (`mod.rs` helpers and views, `page.rs` lazy pages, `shell.rs` window, sidebar, player bar and menus, `bar.rs` slider), `images.rs` (disk cache, ImageIO decode into IOSurfaces, 16 MB purgeable cache), `net.rs` (two small worker pools with main-thread completions), `login.rs`, `paths.rs`, `debug.rs` (developer switches) |
 | `kilo-probe` | Memory and CPU like the OS task managers show, summed over the whole process tree, including the macOS XPC services charged to the app. macOS, Windows and Linux. |
 | `kilo-spike-web`, `kilo-ui-bench` | The measurement labs behind the decisions above |
 
@@ -138,7 +160,15 @@ cargo test --workspace                    # 11 tests
 - `KILO_OPEN=search:Q` or `browse:ID` opens that page after Home.
 - `KILO_NO_ACTIVATE=1` launches without taking focus.
 - `KILO_SCENARIO=wait:3,play:ID,wait:95,close,wait:65,pause,wait:345` runs a
-  scripted session and logs each step to stderr.
+  scripted session and logs each step to stderr. Other steps: `playvideo:ID`
+  (as a click on a music video's card), `browse:ID`, `scroll:Y` or
+  `scroll:end`, `playall`, `shuffleall`, `next`, `open`, and `state`, which
+  logs the page's sections and the queue.
+
+**Measuring:** `scripts/measure.sh dist/Kilo.app wait:15` (window open),
+`... wait:12,close,wait:20` (closed), `... --play VIDEO_ID` (playing, with
+network bytes). `cargo run --release -p kilo-core --example masks <cookies>`
+checks the field mask against live answers.
 
 **Testing without disturbing the owner:** copy the app to the scratchpad and
 launch it with `open -g -n -o log --stderr log --env ... Copy.app`.
@@ -149,20 +179,30 @@ launch it with `open -g -n -o log --stderr log --env ... Copy.app`.
 - Linux clippy of `kilo-core` fails on this Mac (openssl-sys needs headers).
   That's expected.
 - zsh doesn't split `$var`; use `${=var}`.
+- `log` is a zsh builtin: read the system log with `/usr/bin/log show`.
+- A scenario's `KILO_IDLE=SECS` shortens the idle shutdown, and player
+  events (and how the helper ended) are logged during a scenario.
 - The harness blocks chained `sleep`s; use `until` loops or background
   tasks.
 
 ## 6. Status and next steps
 
 **Works and is measured:** everything listed in section 1. UI with Home
-loaded: 36–40 MB total, 0% CPU when idle.
+loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
 
 **Open items, in priority order:**
-1. **Drop the 144p video.** Re-test music.youtube.com as served to phones as
-   the player page: it likely plays audio-only and may be light. It didn't
-   start in one quick test, probably because of how playback was started.
-   Fallback: measure the desktop music.youtube.com page with its UI hidden.
-2. **Session hardening:**
+1. **The video track (done as far as it legally goes).** m.youtube.com has no
+   audio-only mode, and music.youtube.com, which does, costs 398 MB.
+   Kilo plays song versions instead (section 3, item 7). The remaining
+   options touch YouTube's player itself (pretending the browser can't
+   play video, or building m.youtube.com's Shorts-sound player, which has
+   `deviceIsAudioOnly`) and need the owner's decision; neither is
+   recommended.
+2. **More UI memory, if wanted:** draw row and card text by hand instead
+   of `NSTextField`s (about 6 KB and 9 constraints each, maybe 1 MB in all;
+   bench the layer cost first). Consider shutting the helper down sooner
+   while paused with the window closed (owner's call: resume then takes 2 s).
+3. **Session hardening:**
    - **Delete the development copies of the session** in
      `~/Library/HTTPStorages/kilo-spike-web*` and
      `~/Library/WebKit/kilo-spike-web`, **only with the owner's OK.**
@@ -170,17 +210,17 @@ loaded: 36–40 MB total, 0% CPU when idle.
    - Consider storing the session in the Keychain and keeping only
      youtube.com cookies. Today WebKit's file holds the full Google session
      unencrypted, in a folder only the user can read.
-3. **Before publishing:**
+4. **Before publishing:**
    - Choose a license (MIT suggested; not decided yet).
    - Get the owner's go-ahead before creating a GitHub remote.
    - Optionally, Developer ID signing and notarization.
-4. **Features:** a Now Playing view (big art plus Up next and Lyrics), a
+5. **Features:** a Now Playing view (big art plus Up next and Lyrics), a
    queue panel, like/dislike, add to playlist.
-5. **Unverified:**
+6. **Unverified:**
    - Media keys and Control Center next/previous; implemented, but I didn't
      press them myself.
    - Whether helper plays show up in YouTube Music history.
-6. **Windows and Linux front ends** over `kilo-core` and `kilo-player`, once
+7. **Windows and Linux front ends** over `kilo-core` and `kilo-player`, once
    machines are available:
    - Windows: Win32/Direct2D with a WebView2 helper.
    - Linux: GTK with a WebKitGTK helper.

@@ -44,6 +44,13 @@ impl Queue {
         })
     }
 
+    /// Swaps the current entry for another version of it.
+    pub fn replace_current(&mut self, entry: Entry) {
+        if let Some(current) = self.entries.get_mut(self.index) {
+            *current = entry;
+        }
+    }
+
     pub fn jump(&mut self, index: usize) -> Option<&Entry> {
         (index < self.entries.len()).then(|| {
             self.index = index;
@@ -60,10 +67,58 @@ impl Queue {
     /// Appends entries, skipping ones already queued.
     pub fn extend(&mut self, more: Vec<Entry>) {
         for e in more {
-            if e.video_id().is_some() && !self.entries.iter().any(|q| q.video_id() == e.video_id()) {
+            if self.is_new(&e) {
                 self.entries.push(e);
             }
         }
+    }
+
+    /// Adds entries at random places among the tracks still to come (more
+    /// of a shuffled playlist arriving), skipping ones already queued.
+    pub fn extend_shuffled(&mut self, more: Vec<Entry>, rng: &mut Rng) {
+        for e in more {
+            if self.is_new(&e) {
+                let upcoming = self.entries.len() - self.index;
+                let at = self.index + 1 + rng.below(upcoming);
+                self.entries.insert(at, e);
+            }
+        }
+    }
+
+    fn is_new(&self, e: &Entry) -> bool {
+        e.video_id().is_some() && !self.entries.iter().any(|q| q.video_id() == e.video_id())
+    }
+}
+
+/// xorshift64: plenty for shuffling a playlist, and no dependency.
+pub struct Rng(u64);
+
+impl Rng {
+    /// Seeded from the clock and the process id.
+    pub fn new() -> Self {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+        Rng((nanos ^ u64::from(std::process::id()) ^ 0x9E37_79B9_7F4A_7C15) | 1)
+    }
+
+    /// A number in `0..n` (`n` > 0).
+    pub fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
+    }
+
+    /// Fisher–Yates.
+    pub fn shuffle<T>(&mut self, items: &mut [T]) {
+        for i in (1..items.len()).rev() {
+            items.swap(i, self.below(i + 1));
+        }
+    }
+}
+
+impl Default for Rng {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -77,7 +132,7 @@ mod tests {
             title: id.into(),
             subtitle: "".into(),
             thumb: None,
-            target: Target::Play { video_id: id.into(), playlist_id: None },
+            target: Target::Play { video_id: id.into(), playlist_id: None, music_video: false },
             duration: "".into(),
         }
     }
@@ -92,5 +147,15 @@ mod tests {
         assert_eq!(q.advance().and_then(Entry::video_id), Some("ccccccccccc"));
         assert!(q.advance().is_none());
         assert_eq!(q.back().and_then(Entry::video_id), Some("bbbbbbbbbbb"));
+    }
+
+    #[test]
+    fn shuffled_additions_land_after_the_current_track() {
+        let mut q = Queue::from_entries(&[song("aaaaaaaaaaa"), song("bbbbbbbbbbb")], "bbbbbbbbbbb");
+        let mut rng = Rng::new();
+        q.extend_shuffled(vec![song("ccccccccccc"), song("ddddddddddd"), song("aaaaaaaaaaa")], &mut rng);
+        assert_eq!(q.entries().len(), 4);
+        assert_eq!(q.current().and_then(Entry::video_id), Some("bbbbbbbbbbb"));
+        assert_eq!(q.entries()[0].video_id(), Some("aaaaaaaaaaa"));
     }
 }

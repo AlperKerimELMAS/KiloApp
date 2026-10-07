@@ -38,11 +38,14 @@ architecture, the status and the next steps. Details and measurements are in
 cargo clippy --release --workspace -- -D warnings      # also run with --target x86_64-pc-windows-msvc
 cargo test --workspace
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown
+scripts/measure.sh dist/Kilo.app wait:15           # launch, run a scenario, measure
 ```
 
 Developer switches live in `crates/kilo-mac/src/debug.rs`: `KILO_SNAPSHOT`,
 `KILO_OPEN`, `KILO_NO_ACTIVATE`, `KILO_SCENARIO`. There's no Screen
-Recording permission, so use `KILO_SNAPSHOT` to see the UI.
+Recording permission, so use `KILO_SNAPSHOT` to see the UI. `KILO_SCENARIO`
+can also browse, scroll, play and print the page and queue state, which is
+how lazy loading and the queue are tested.
 
 ## Things that bit us
 
@@ -53,10 +56,28 @@ Recording permission, so use `KILO_SNAPSHOT` to see the UI.
 - **Don't let a text field auto-focus.** It starts the 11 MB AutoFill
   service. `FocusSink` takes focus instead.
 - **Pages use frame layout and lazy blocks:**
-  - Use `frame_label` there: it never touches Auto Layout.
+  - Use `frame_label` there: it adds no constraints of its own. On macOS 27
+    AppKit still gives every label about 9 autoresizing constraints, even in
+    a window with no constraints at all (`kilo-ui-bench --bin engine`).
   - Only views near the screen exist.
+- **Never set a `CGImage` as layer contents.** Core Animation copies it, so
+  every image on screen costs twice its size. Thumbnails are decoded into
+  IOSurfaces, and the ones nothing shows are made purgeable (`images.rs`).
 - **A web view only plays media when it's in a window,** so the helper keeps
   it in an offscreen 128×72 window.
+- **m.youtube.com always streams a video track,** even when hidden. So Kilo
+  plays a music video's song version when it has one: a song's video is a
+  still image, 7% of the bytes. music.youtube.com streams audio only, but
+  costs 398 MB.
+- **YouTube's API honors `X-Goog-FieldMask`,** but rejects any unknown field
+  name with a 400, and nested `*` wildcards make it take seconds or time out.
+  Only "up next" requests carry a mask.
+- **macOS 27 quits an idle helper itself** ("quiet safe quit", SIGTERM) a
+  few minutes after playback stops, before or after Kilo's own 5-minute
+  idle shutdown. Both are fine: the next play starts a fresh helper.
+- **`app::with` silently skips when the state is already borrowed.** Don't
+  call AppKit methods that can run the event loop (like `NSWindow.close`)
+  inside it.
 
 ## Style
 

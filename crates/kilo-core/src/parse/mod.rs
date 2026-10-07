@@ -6,9 +6,22 @@
 
 mod raw;
 
+use std::sync::OnceLock;
+
 use crate::model::{Entry, Header, Page, PageKind, Section, Target, Thumb};
 use crate::{Error, Result};
 use raw::*;
+
+/// The `X-Goog-FieldMask` for "up next" requests: exactly the fields
+/// `up_next` reads, built from its structs. A radio comes back as 75 KB of
+/// JSON instead of 560 KB (8 KB instead of 36 KB on the wire), no slower.
+///
+/// Browse and search answers go without one: their masks come out either
+/// too long to send (45 KB) or, with wildcards, slow for the server.
+pub fn next_mask() -> &'static str {
+    static MASK: OnceLock<String> = OnceLock::new();
+    MASK.get_or_init(raw::mask::<NextResponse>)
+}
 
 /// A browse page: home, explore, library, album, playlist, artist, or a
 /// continuation of one.
@@ -75,7 +88,10 @@ pub fn search(json: &[u8]) -> Result<Page> {
 }
 
 /// "Up next": the queue YouTube Music builds for a track (its radio or the
-/// rest of its playlist).
+/// rest of its playlist). Where a music video comes with its song version,
+/// the song is taken, as YouTube Music does with Song/Video set to Song:
+/// Kilo never shows video, and the song's player streams a still picture
+/// instead of video (measured: 41% less data).
 pub fn up_next(json: &[u8]) -> Result<Vec<Entry>> {
     let r: NextResponse = serde_json::from_slice(json).map_err(|e| Error::Parse(e.to_string()))?;
     let panel = r
@@ -91,12 +107,24 @@ pub fn up_next(json: &[u8]) -> Result<Vec<Entry>> {
         .contents
         .into_iter()
         .filter_map(|item| {
-            let video = item.playlist_panel_video_renderer.or(item.playlist_panel_video_wrapper_renderer.map(|w| w.primary_renderer.playlist_panel_video_renderer))?;
+            let video = match (item.playlist_panel_video_renderer, item.playlist_panel_video_wrapper_renderer) {
+                (Some(video), _) => video,
+                (None, Some(w)) => {
+                    let mut versions: Vec<PanelVideo> = std::iter::once(w.primary_renderer.playlist_panel_video_renderer)
+                        .chain(w.counterpart.into_iter().map(|c| c.counterpart_renderer.playlist_panel_video_renderer))
+                        .collect();
+                    let song = versions.iter().position(|v| video_type(v.navigation_endpoint.as_ref()) == "MUSIC_VIDEO_TYPE_ATV").unwrap_or(0);
+                    versions.swap_remove(song)
+                }
+                (None, None) => return None,
+            };
+            let kind = video_type(video.navigation_endpoint.as_ref());
             Some(Entry {
                 title: join(&video.title).into(),
                 subtitle: first_segment(&video.short_byline_text.unwrap_or(video.long_byline_text)).into(),
-                thumb: best(&video.thumbnail.thumbnails).map(|u| Thumb::new(u, true)),
-                target: Target::Play { video_id: video.video_id.into(), playlist_id: None },
+                // Songs have square art; videos 16:9 frames.
+                thumb: best(&video.thumbnail.thumbnails).map(|u| Thumb::new(u, kind != "MUSIC_VIDEO_TYPE_ATV")),
+                target: Target::Play { video_id: video.video_id.into(), playlist_id: None, music_video: kind == "MUSIC_VIDEO_TYPE_OMV" },
                 duration: join(&video.length_text).into(),
             })
         })
@@ -150,7 +178,7 @@ fn sections(contents: Vec<SectionItem>, page: &mut Page) {
             // Search's "top result": the result itself, then its highlights.
             let target = card.title.runs.first().and_then(|r| r.navigation_endpoint.as_ref()).map_or(Target::None, target);
             let top = Entry {
-                title: join(&card.title).into(),
+                title: join_linked(&card.title).into(),
                 subtitle: join(&card.subtitle).into(),
                 thumb: card.thumbnail.music_thumbnail_renderer.as_ref().and_then(thumb_of),
                 target,
@@ -213,15 +241,15 @@ fn entry(item: ShelfItem) -> Option<Entry> {
     }
     if let Some(r) = item.music_responsive_list_item_renderer {
         let mut columns = r.flex_columns.iter().map(|c| &c.music_responsive_list_item_flex_column_renderer.text);
-        let title = columns.next().map(join).unwrap_or_default();
-        let subtitle = columns.map(join).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" • ");
+        let title = columns.next().map(join_linked).unwrap_or_default();
+        let subtitle = columns.map(join_linked).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" • ");
         let first_run_target = r.flex_columns.first().and_then(|c| c.music_responsive_list_item_flex_column_renderer.text.runs.first()).and_then(|run| run.navigation_endpoint.as_ref()).map(target);
         let target = if let Some(video_id) = r.playlist_item_data.as_ref().map(|p| p.video_id.clone()).filter(|v| !v.is_empty()) {
-            let playlist_id = match &first_run_target {
-                Some(Target::Play { playlist_id, .. }) => playlist_id.clone(),
-                _ => None,
+            let (playlist_id, music_video) = match &first_run_target {
+                Some(Target::Play { playlist_id, music_video, .. }) => (playlist_id.clone(), *music_video),
+                _ => (None, false),
             };
-            Target::Play { video_id: video_id.into(), playlist_id }
+            Target::Play { video_id: video_id.into(), playlist_id, music_video }
         } else if let Some(nav) = &r.navigation_endpoint {
             target(nav)
         } else {
@@ -259,7 +287,11 @@ fn entry(item: ShelfItem) -> Option<Entry> {
 
 fn target(e: &Endpoint) -> Target {
     if let Some(w) = &e.watch_endpoint {
-        return Target::Play { video_id: w.video_id.clone().into(), playlist_id: w.playlist_id.clone().map(Into::into) };
+        return Target::Play {
+            video_id: w.video_id.clone().into(),
+            playlist_id: w.playlist_id.clone().map(Into::into),
+            music_video: video_type(Some(e)) == "MUSIC_VIDEO_TYPE_OMV",
+        };
     }
     if let Some(w) = &e.watch_playlist_endpoint {
         return Target::PlayPlaylist { playlist_id: w.playlist_id.clone().into() };
@@ -279,6 +311,15 @@ fn target(e: &Endpoint) -> Target {
         return Target::Browse { id: b.browse_id.clone().into(), params: b.params.clone().map(Into::into), kind };
     }
     Target::None
+}
+
+/// `MUSIC_VIDEO_TYPE_ATV` (a song), `_OMV` (an official music video),
+/// `_UGC`…, or "" when not given.
+fn video_type(e: Option<&Endpoint>) -> &str {
+    e.and_then(|e| e.watch_endpoint.as_ref())
+        .and_then(|w| w.watch_endpoint_music_supported_configs.as_ref())
+        .and_then(|c| c.watch_endpoint_music_config.as_ref())
+        .map_or("", |c| c.music_video_type.as_str())
 }
 
 fn header(h: &HeaderRenderers) -> Option<Header> {
@@ -344,11 +385,11 @@ fn best(list: &[ThumbnailEntry]) -> Option<&str> {
 }
 
 fn join(t: &Text) -> String {
-    let mut out = String::new();
-    for r in &t.runs {
-        out.push_str(&r.text);
-    }
-    out
+    t.runs.iter().map(|r| r.text.as_str()).collect()
+}
+
+fn join_linked(t: &LinkText) -> String {
+    t.runs.iter().map(|r| r.text.as_str()).collect()
 }
 
 /// "Artist • Album • 2020" → "Artist".
@@ -388,7 +429,7 @@ mod tests {
         assert_eq!(&**title, "Listen again");
         assert_eq!(&*entries[0].subtitle, "Album \u{2022} 2020");
         assert_eq!(entries[0].target, Target::Browse { id: "MPREb_x".into(), params: None, kind: PageKind::Album });
-        assert_eq!(entries[0].thumb.as_ref().unwrap().sized(100), "https://lh3.googleusercontent.com/a=w100-h100-l90-rj");
+        assert_eq!(entries[0].thumb.as_ref().unwrap().sized(100), "https://lh3.googleusercontent.com/a=w100-h100-l75-rj");
     }
 
     #[test]
@@ -409,12 +450,50 @@ mod tests {
         let entry = &page.sections[0].entries()[0];
         assert_eq!(entry.video_id(), Some("DNB6LxIBJzc"));
         assert_eq!(&*entry.duration, "5:10");
-        assert_eq!(entry.target, Target::Play { video_id: "DNB6LxIBJzc".into(), playlist_id: Some("OLAK5".into()) });
+        assert_eq!(entry.target, Target::Play { video_id: "DNB6LxIBJzc".into(), playlist_id: Some("OLAK5".into()), music_video: false });
+    }
+
+    #[test]
+    fn up_next_takes_the_song_version_of_a_music_video() {
+        let video = |id: &str, kind: &str| {
+            format!(
+                r#"{{"playlistPanelVideoRenderer":{{"title":{{"runs":[{{"text":"Song"}}]}},"videoId":"{id}",
+                "navigationEndpoint":{{"watchEndpoint":{{"videoId":"{id}","watchEndpointMusicSupportedConfigs":
+                    {{"watchEndpointMusicConfig":{{"musicVideoType":"{kind}"}}}}}}}}}}}}"#
+            )
+        };
+        let json = format!(
+            r#"{{"contents":{{"singleColumnMusicWatchNextResultsRenderer":{{"tabbedRenderer":{{"watchNextTabbedResultsRenderer":{{"tabs":[
+                {{"tabRenderer":{{"content":{{"musicQueueRenderer":{{"content":{{"playlistPanelRenderer":{{"contents":[
+                    {{"playlistPanelVideoWrapperRenderer":{{"primaryRenderer":{omv},"counterpart":[{{"counterpartRenderer":{atv}}}]}}}},
+                    {other}]}}}}}}}}}}}}]}}}}}}}}}}"#,
+            omv = video("dQw4w9WgXcQ", "MUSIC_VIDEO_TYPE_OMV"),
+            atv = video("lYBUbBu4W08", "MUSIC_VIDEO_TYPE_ATV"),
+            other = video("djV11Xbc914", "MUSIC_VIDEO_TYPE_OMV"),
+        );
+        let queue = up_next(json.as_bytes()).unwrap();
+        assert_eq!(queue[0].video_id(), Some("lYBUbBu4W08"));
+        assert!(!queue[0].is_music_video());
+        // A music video without a song version stays as it is.
+        assert_eq!(queue[1].video_id(), Some("djV11Xbc914"));
+        assert!(queue[1].is_music_video());
     }
 
     #[test]
     fn malformed_json_is_an_error_not_a_panic() {
         assert!(browse(b"{not json").is_err());
         assert!(browse(b"{}").unwrap().sections.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    #[test]
+    fn next_mask_is_compact_and_well_formed() {
+        let mask = super::next_mask();
+        assert!(mask.len() < 2048, "{} bytes", mask.len());
+        assert_eq!(mask.matches('(').count(), mask.matches(')').count());
+        assert!(mask.starts_with("contents(singleColumnMusicWatchNextResultsRenderer("));
+        assert!(mask.contains("counterpartRenderer(playlistPanelVideoRenderer("));
     }
 }

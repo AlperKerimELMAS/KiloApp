@@ -32,9 +32,11 @@ const VIEW_SIZE: NSSize = NSSize::new(128.0, 72.0);
 const RULES: &str = r#"[{"trigger":{"url-filter":".*","resource-type":["image","font"]},"action":{"type":"block"}}]"#;
 
 /// The page's own interface is never shown: take it out of style and layout
-/// entirely (10% less memory, 40% fewer wakeups). Cosmetic only.
+/// entirely (10% less memory, 40% fewer wakeups). Cosmetic only. That
+/// includes the video picture: the helper then composites nothing (17 → 10
+/// wakeups/s measured), though WebKit still decodes it.
 const PAGE_CSS: &str = "*,*::before,*::after{animation:none!important;transition:none!important}\
-#player-control-container,#header-bar,ytm-mobile-topbar-renderer,ytm-watch,ytm-pivot-bar-renderer{display:none!important}";
+#player-control-container,#header-bar,ytm-mobile-topbar-renderer,ytm-watch,ytm-pivot-bar-renderer,video{display:none!important}";
 
 /// Page-world bridge. Media events go to the helper as one-line messages;
 /// `__kilo` drives YouTube's player through its own API.
@@ -212,6 +214,7 @@ pub fn run() -> ! {
 
     spawn_command_reader();
     app.run();
+    emit(&Event::Error("helper's event loop ended".into()));
     std::process::exit(0)
 }
 
@@ -312,6 +315,7 @@ fn spawn_command_reader() {
             }
         }
         // The app closed our stdin or died: never outlive it.
+        eprintln!("kilo-player: stdin closed, exiting");
         std::process::exit(0);
     });
     if spawned.is_err() {

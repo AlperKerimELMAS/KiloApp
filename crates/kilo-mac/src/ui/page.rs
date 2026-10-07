@@ -35,7 +35,7 @@ const TEXT: f64 = 110.0;
 /// Item ids handed to clickable views map back to (section, entry) here.
 pub type Items = Vec<(usize, usize)>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Header,
     Title(usize),
@@ -85,8 +85,42 @@ fn is_artist(e: &Entry) -> bool {
     matches!(e.target, Target::Browse { kind: PageKind::Artist, .. })
 }
 
+/// More of a page to load: its next shelves, or the next rows of a long list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum More {
+    Page,
+    List,
+}
+
 impl PageView {
     pub fn new(page: Rc<Page>, scale: f64, items: &mut Items, mtm: MainThreadMarker) -> Self {
+        let document = FlippedView::new(mtm);
+        document.setFrame(NSRect::new(NSPoint::ZERO, NSSize::new(800.0, 0.0)));
+        let root = NSScrollView::new(mtm);
+        root.setHasVerticalScroller(true);
+        root.setAutohidesScrollers(true);
+        root.setDrawsBackground(false);
+        root.setDocumentView(Some(&document));
+        root.contentView().setPostsBoundsChangedNotifications(true);
+        let mut view = PageView {
+            root,
+            document,
+            page: page.clone(),
+            blocks: Vec::new(),
+            ids: Vec::new(),
+            live: RefCell::new(HashMap::new()),
+            width: Cell::new(0.0),
+            scale,
+            mtm,
+        };
+        view.set_page(page, items);
+        view
+    }
+
+    /// Shows `page`, typically this page with more of it loaded, keeping the
+    /// scroll position. Clickable entries get fresh ids in `items`.
+    pub fn set_page(&mut self, page: Rc<Page>, items: &mut Items) {
+        items.clear();
         let mut ids = Vec::with_capacity(page.sections.len());
         for (si, s) in page.sections.iter().enumerate() {
             ids.push(
@@ -139,18 +173,46 @@ impl PageView {
             }
             y += GAP;
         }
-        let height = y + BOTTOM;
 
-        let document = FlippedView::new(mtm);
-        document.setFrame(NSRect::new(NSPoint::ZERO, NSSize::new(800.0, height)));
-        let root = NSScrollView::new(mtm);
-        root.setHasVerticalScroller(true);
-        root.setAutohidesScrollers(true);
-        root.setDrawsBackground(false);
-        root.setDocumentView(Some(&document));
-        root.contentView().setPostsBoundsChangedNotifications(true);
+        // Blocks that didn't move keep their views (and a shelf its sideways
+        // scroll): more shelves or rows only add blocks after them.
+        self.live.borrow_mut().retain(|&i, live| {
+            let kept = self.blocks.get(i).zip(blocks.get(i)).is_some_and(|(a, b)| a.kind == b.kind && a.y == b.y);
+            if !kept {
+                live.view.removeFromSuperview();
+            }
+            kept
+        });
+        let doc = self.document.frame();
+        self.document.setFrame(NSRect::new(doc.origin, NSSize::new(doc.size.width, y + BOTTOM)));
+        self.page = page;
+        self.blocks = blocks;
+        self.ids = ids;
+    }
 
-        PageView { root, document, page, blocks, ids, live: RefCell::new(HashMap::new()), width: Cell::new(0.0), scale, mtm }
+    /// What to load next, once the end of what's loaded is within a screen
+    /// of view: the rest of a long list first, then more shelves.
+    pub fn wants_more(&self) -> Option<(More, Box<str>)> {
+        let clip = self.root.contentView().bounds();
+        let horizon = clip.origin.y + 2.0 * clip.size.height;
+        for (si, s) in self.page.sections.iter().enumerate() {
+            if let Section::List { continuation: Some(token), .. } = s {
+                let end = self.blocks.iter().filter(|b| matches!(b.kind, Kind::Row(s, _) if s == si)).map(|b| b.y + b.h).fold(0.0, f64::max);
+                if end <= horizon {
+                    return Some((More::List, token.clone()));
+                }
+            }
+        }
+        let token = self.page.continuation.as_ref()?;
+        (self.document.frame().size.height <= horizon).then(|| (More::Page, token.clone()))
+    }
+
+    /// Scrolls to `y` points from the top, or to the end.
+    pub fn scroll_to(&self, y: Option<f64>) {
+        let clip = self.root.contentView();
+        let end = (self.document.frame().size.height - clip.bounds().size.height).max(0.0);
+        clip.scrollToPoint(NSPoint::new(0.0, y.unwrap_or(end).clamp(0.0, end)));
+        self.root.reflectScrolledClipView(&clip);
     }
 
     /// Creates views for blocks near the visible area, destroys the rest,

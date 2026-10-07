@@ -4,6 +4,7 @@
 //! models and drops them.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
@@ -17,6 +18,8 @@ const API: &str = "https://music.youtube.com/youtubei/v1/";
 /// Used only if the live page can't be read; refreshed from the page daily.
 const FALLBACK_VERSION: &str = "1.20261004.17.00";
 const CONFIG_MAX_AGE_SECS: u64 = 24 * 60 * 60;
+/// How much of music.youtube.com's page to read for its config.
+const CONFIG_PREFIX: u64 = 64 * 1024;
 
 /// What music.youtube.com's page tells its own client to use.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,21 +41,31 @@ impl Config {
         if !cookie.is_empty() {
             headers.push(("Cookie", &cookie));
         }
-        let page = http.get(ORIGIN, &headers)?;
-        let page = String::from_utf8_lossy(&page);
+        // The page is ~550 KB, but its config sits in the first ~25 KB.
+        let head = http.get_prefix(ORIGIN, &headers, CONFIG_PREFIX)?;
+        if let [Some(version), Some(visitor), Some(hl), Some(gl)] = Self::fields(&head) {
+            return Ok(Config { version, visitor, hl, gl, fetched: unix_now() });
+        }
+        let [version, visitor, hl, gl] = Self::fields(&http.get(ORIGIN, &headers)?);
+        Ok(Config {
+            version: version.unwrap_or_else(|| FALLBACK_VERSION.into()),
+            visitor: visitor.unwrap_or_default(),
+            hl: hl.unwrap_or_else(|| "en".into()),
+            gl: gl.unwrap_or_else(|| "US".into()),
+            fetched: unix_now(),
+        })
+    }
+
+    /// Client version, visitor id, language and region, as found in the page.
+    fn fields(page: &[u8]) -> [Option<String>; 4] {
+        let page = String::from_utf8_lossy(page);
         let field = |key: &str| {
             let pat = format!("\"{key}\":\"");
             let start = page.find(&pat)? + pat.len();
             let len = page[start..].find('"')?;
             Some(page[start..start + len].to_owned())
         };
-        Ok(Config {
-            version: field("INNERTUBE_CLIENT_VERSION").unwrap_or_else(|| FALLBACK_VERSION.into()),
-            visitor: field("VISITOR_DATA").unwrap_or_default(),
-            hl: field("HL").unwrap_or_else(|| "en".into()),
-            gl: field("GL").unwrap_or_else(|| "US".into()),
-            fetched: unix_now(),
-        })
+        ["INNERTUBE_CLIENT_VERSION", "VISITOR_DATA", "HL", "GL"].map(field)
     }
 
     /// Loads a cached config if it's fresh enough.
@@ -82,11 +95,23 @@ pub struct Client {
     http: Http,
     session: Session,
     config: Config,
+    masks: bool,
 }
+
+/// The server turned the field mask down (it validates every field name,
+/// so a renamed field would); requests go without it from then on.
+static MASK_REJECTED: AtomicBool = AtomicBool::new(false);
 
 impl Client {
     pub fn new(http: Http, session: Session, config: Config) -> Self {
-        Client { http, session, config }
+        Client { http, session, config, masks: true }
+    }
+
+    /// The same client without field masks (developer tools: comparing
+    /// full and masked responses).
+    pub fn unmasked(mut self) -> Self {
+        self.masks = false;
+        self
     }
 
     pub fn config(&self) -> &Config {
@@ -98,12 +123,12 @@ impl Client {
         if let Some(p) = params {
             body["params"] = p.into();
         }
-        self.call("browse", body)
+        self.call("browse", body, None)
     }
 
     /// The next page of a long list (home feed, playlist tracks).
     pub fn continuation(&self, token: &str) -> Result<Vec<u8>> {
-        self.call("browse", json!({ "continuation": token }))
+        self.call("browse", json!({ "continuation": token }), None)
     }
 
     pub fn search(&self, query: &str, params: Option<&str>) -> Result<Vec<u8>> {
@@ -111,11 +136,11 @@ impl Client {
         if let Some(p) = params {
             body["params"] = p.into();
         }
-        self.call("search", body)
+        self.call("search", body, None)
     }
 
     pub fn search_suggestions(&self, input: &str) -> Result<Vec<u8>> {
-        self.call("music/get_search_suggestions", json!({ "input": input }))
+        self.call("music/get_search_suggestions", json!({ "input": input }), None)
     }
 
     /// "Up next" for a track: its radio, or the rest of the playlist it was
@@ -131,7 +156,15 @@ impl Client {
                 "enablePersistentPlaylistPanel": true,
                 "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
             }),
+            Some(crate::parse::next_mask()),
         )
+    }
+
+    /// "Up next" for one track alone: the track as YouTube Music would play
+    /// it, with its song version when it's a music video. About 30 KB,
+    /// where a radio (`next`) is about 800 KB.
+    pub fn next_single(&self, video_id: &str) -> Result<Vec<u8>> {
+        self.call("next", json!({ "videoId": video_id, "isAudioOnly": true }), Some(crate::parse::next_mask()))
     }
 
     /// The queue for playing a whole playlist or mix from its start.
@@ -143,10 +176,19 @@ impl Client {
                 "isAudioOnly": true,
                 "enablePersistentPlaylistPanel": true,
             }),
+            Some(crate::parse::next_mask()),
         )
     }
 
-    fn call(&self, endpoint: &str, mut body: serde_json::Value) -> Result<Vec<u8>> {
+    /// Any endpoint with any body (developer tools).
+    pub fn raw(&self, endpoint: &str, body: &str) -> Result<Vec<u8>> {
+        self.call(endpoint, serde_json::from_str(body).map_err(|e| Error::Parse(e.to_string()))?, None)
+    }
+
+    /// Calls `endpoint`, with a field mask if given, so the answer holds only
+    /// what Kilo parses. If the server rejects the mask, the request goes
+    /// again without it.
+    fn call(&self, endpoint: &str, mut body: serde_json::Value, mask: Option<&str>) -> Result<Vec<u8>> {
         body["context"] = json!({
             "client": {
                 "clientName": "WEB_REMIX",
@@ -171,7 +213,20 @@ impl Client {
             ("X-Youtube-Client-Name", "67"),
             ("X-Youtube-Client-Version", self.config.version.as_str()),
         ];
-        self.http.post_json(&format!("{API}{endpoint}?prettyPrint=false"), &headers, &body.to_string())
+        let url = format!("{API}{endpoint}?prettyPrint=false");
+        let body = body.to_string();
+        if let Some(mask) = mask.filter(|_| self.masks && !MASK_REJECTED.load(Ordering::Relaxed)) {
+            let mut masked = headers.to_vec();
+            masked.push(("X-Goog-FieldMask", mask));
+            match self.http.post_json(&url, &masked, &body) {
+                Err(Error::Http(e)) if e == "HTTP 400" => {
+                    MASK_REJECTED.store(true, Ordering::Relaxed);
+                    eprintln!("kilo: {endpoint} field mask rejected; sending full requests");
+                }
+                result => return result,
+            }
+        }
+        self.http.post_json(&url, &headers, &body)
     }
 }
 

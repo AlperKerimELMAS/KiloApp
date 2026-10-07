@@ -187,7 +187,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kilo-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "kilo-mac"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -209,13 +209,14 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "objc2-image-io",
+ "objc2-io-surface",
  "objc2-quartz-core",
  "objc2-web-kit",
 ]
 
 [[package]]
 name = "kilo-player"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -228,11 +229,11 @@ dependencies = [
 
 [[package]]
 name = "kilo-probe"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "kilo-spike-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "kilo-probe",
@@ -244,9 +245,10 @@ dependencies = [
 
 [[package]]
 name = "kilo-ui-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
+ "dispatch2",
  "kilo-probe",
  "objc2",
  "objc2-app-kit",
@@ -458,8 +460,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
 dependencies = [
  "bitflags",
+ "libc",
  "objc2",
  "objc2-core-foundation",
+ "objc2-foundation",
 ]
 
 [[package]]

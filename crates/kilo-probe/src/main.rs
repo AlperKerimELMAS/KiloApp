@@ -148,11 +148,12 @@ fn print_breakdown(roots: &[u32], since: Instant, first: &[(u32, String, Sample)
     let wall_ns = since.elapsed().as_nanos().max(1) as f64;
     let mut rows = kilo_probe::breakdown(roots);
     rows.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.footprint));
-    println!("{:>7}  {:<40} {:>10}  {:>6}", "pid", "process", "footprint", "cpu");
+    println!("{:>7}  {:<40} {:>10}  {:>6}  {:>8}", "pid", "process", "footprint", "cpu", "wakeups");
     for (pid, name, s) in rows {
-        let start = first.iter().find(|(p, _, _)| *p == pid).map_or(s.cpu_ns, |(_, _, f)| f.cpu_ns);
-        let cpu = s.cpu_ns.saturating_sub(start) as f64 / wall_ns * 100.0;
-        println!("{pid:>7}  {name:<40} {:>10}  {cpu:5.1}%", mb(s.footprint));
+        let start = first.iter().find(|(p, _, _)| *p == pid).map(|(_, _, f)| *f).unwrap_or(s);
+        let cpu = s.cpu_ns.saturating_sub(start.cpu_ns) as f64 / wall_ns * 100.0;
+        let wakeups = s.wakeups.zip(start.wakeups).map_or("-".into(), |(n, p)| format!("{:.1}/s", n.saturating_sub(p) as f64 / wall_ns * 1e9));
+        println!("{pid:>7}  {name:<40} {:>10}  {cpu:5.1}%  {wakeups:>8}", mb(s.footprint));
     }
 }
 

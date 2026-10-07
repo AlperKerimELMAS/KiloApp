@@ -1,15 +1,16 @@
 # Kilo
 
-A very lightweight YouTube Music desktop client. It uses about **40 MB** with
-the window open and about **150 MB** while playing. YouTube Music in Chrome
-uses about 1.1 GB.
+A very lightweight YouTube Music desktop client. It uses about **31 MB** with
+the window open, **27 MB** with it closed, and about **145 MB** while playing.
+YouTube Music in Chrome uses about 1.1 GB.
 
 Kilo is an unofficial client, not affiliated with YouTube or Google.
 
 - **Native UI.** AppKit on macOS. Windows and Linux front ends are planned.
 - **YouTube's own player plays the audio,** in a hidden system web view that
   runs in a helper process. Kilo never downloads, captures or decodes media,
-  and never blocks ads.
+  and never blocks ads. Music videos play as their song version when there
+  is one, which needs 41% less data.
 - **Playback needs a YouTube Music Premium account.** Free accounts can browse
   and search.
 

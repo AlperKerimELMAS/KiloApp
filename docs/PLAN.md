@@ -28,7 +28,7 @@ included (on macOS that also means WebKit's XPC services).
 
 | State | Target | Status (macOS) |
 |---|---|---|
-| Window open, idle | ≤ 40 MB Retina, ≤ 22 MB at 1× | **37–40 MB measured** (Home loaded, Retina, 0% CPU) |
+| Window open, idle | ≤ 40 MB Retina, ≤ 22 MB at 1× | **31 MB measured** (Home loaded, Retina, 0% CPU); 27 MB with the window closed |
 | Playing, everything included | ≤ 125 MB | **113–118 MB measured** |
 | Paused for more than a few minutes | main process only | **2.3 MB measured** (helper killed) |
 
@@ -193,9 +193,9 @@ How it gets there, each step measured:
 - **Images:**
   - Requested from the server at exact pixel size.
   - Cached on disk, capped at 64 MB.
-  - Decoded off the main thread by ImageIO straight to a `CGImage`.
-  - Shown as layer contents, so there's no copy.
-  - At most 8 MB of decoded images is kept beyond what's on screen.
+  - Decoded off the main thread by ImageIO, into an IOSurface that Core
+    Animation shows without a copy (see "Efficiency pass" below).
+  - Images nothing shows stay cached as purgeable memory, up to 16 MB.
 - **Small dependencies.** The OS's TLS (`native-tls`) instead of bundling
   rustls, and parsers that deserialize only the fields Kilo shows (sub-ms per
   page).
@@ -208,6 +208,83 @@ icon).
   permission needed.
 - `KILO_OPEN=search:q` or `browse:ID` opens that page.
 - `KILO_NO_ACTIVATE=1` launches without taking focus.
+
+## Efficiency pass (v0.2, 2026-10-07)
+
+Every change below was measured with `kilo-probe`, the same Mac, Retina,
+1240×820 window, against the build before it. Totals include
+SetStoreUpdateService (2.1 MB), as Activity Monitor would.
+
+**UI process:**
+
+| State | Before | After | What did it |
+|---|---|---|---|
+| Window open, Home loaded | 36.0–37.5 MB | **30.5–31.0 MB** (up to 34 when Home shows more video thumbnails) | IOSurface images, smaller HTTP buffers |
+| Window closed (20 s after) | 29.1–38.5 MB | **26.6–27.6 MB** | the whole window is released on close |
+| Home after six scrolls | 52 MB | **35–39 MB** (+ up to 16 MB purgeable, not counted) | IOSurface images, purgeable cache |
+| Playing, window closed: app CPU / wakeups | 0.3%, 3.5/s | **0.0%, 0.2/s** | progress timer stops when the window isn't visible |
+
+- **Images were held twice.** A `CGImage` set as layer contents gets copied
+  by Core Animation: Home's thumbnails cost 3.1 MB decoded plus a 3.1 MB
+  copy. Decoding into IOSurfaces, which the window server reads in place,
+  removed the copy (6.2 → 3.4 MB).
+- **Purgeable cache.** Cached images that no layer shows are marked
+  volatile. macOS doesn't count volatile memory in the footprint and takes
+  it back when it needs to; Kilo then decodes again. The cache can hold
+  16 MB without costing anything.
+- **Closing the window released almost nothing:** the window and its views
+  were kept for reopening. Now the window is dropped on close and rebuilt
+  from the app's state when the Dock icon is clicked.
+- **HTTP buffers:** ureq keeps 128 KB each way per pooled connection (twelve
+  buffers, 1.5 MB, were live). 16 KB is plenty for a few KB of headers.
+- **Measured and dropped:** `malloc_zone_pressure_relief` after scrolling
+  frees nothing (the heap is live data, not fragmentation). Text labels
+  would save about 6 KB each if drawn by hand, because on macOS 27 every
+  `NSTextField` gets about 9 autoresizing constraints even in a window
+  without constraints (`kilo-ui-bench --bin engine`); not worth it yet.
+
+**Player (m.youtube.com in the helper):**
+
+| | Measured |
+|---|---|
+| Media bytes, a song (art track) | audio 2.75 MB, video 0.19 MB (7%): the "video" is a 144×144 still |
+| Media bytes, a music video | audio 2.3 MB, video 1.4 MB (38%); 3.0 MB/min on the wire |
+| A music video's id, now played as its song version | **1.77 MB/min (−41%)**, same CPU |
+| `video{display:none}` in the page CSS | same bytes and CPU (WebKit still decodes); helper wakeups 17 → 10/s |
+| music.youtube.com as the player page | audio only (one audio buffer), but **398 MB**, 11% CPU, and Metal's compiler service (17.5 MB) |
+| Paused | 0.14% CPU, about 1 wakeup/s; hiding the window while paused changes nothing |
+| While buffering | WebKit's GPU process adds ~37 MB for under a second per media segment (about every 10 s), in both builds |
+| Paused for minutes | macOS 27 itself quits the idle helper ("quiet safe quit", SIGTERM), sometimes before Kilo's 5-minute shutdown |
+
+- **The video track can't be dropped legally on m.youtube.com:** the mobile
+  player has no audio-only mode, and hiding the element only saves
+  compositing. YouTube Music's own page is audio-only but 2.6× the memory.
+  So Kilo plays a music video's song version whenever there is one, as
+  YouTube Music does with its Song/Video switch set to Song. Signed in,
+  "up next" answers list the song version next to the video (44 of 50 radio
+  tracks had one).
+- **The GPU process's ~47 wakeups/s** are audio output: AAC's 1024-sample
+  frames at 48 kHz are 21 ms apart.
+
+**Network:**
+
+| | Before | After |
+|---|---|---|
+| A radio ("up next", JSON) | 800–875 KB (36 KB on the wire) | **110 KB (8 KB)**, field mask |
+| Song version of one track | 28 KB | **2 KB** |
+| Album/artist art (320 px) | JPEG q90 | **q75: 38–55% smaller**, no visible difference |
+| Video thumbnails | JPEG | **WebP: 33–50% smaller** (JPEG fallback) |
+| Daily config refresh | 549 KB page | **first 64 KB** (the fields are in the first 25 KB) |
+| Home before first paint | 3 requests | **1**; more shelves load as you scroll |
+| Opening a long playlist | up to 21 requests | **1**; the rest loads on scroll, or into the queue on Play/Shuffle |
+
+- **Field masks:** YouTube's API honors `X-Goog-FieldMask`, so Kilo can ask
+  for exactly the fields it parses. The mask is generated from the parser's
+  own structs (`parse/raw.rs`), and a masked answer parses to the same queue
+  as a full one (`cargo run --example masks`). The server rejects unknown
+  field names with a 400 (Kilo then retries without), and nested `*`
+  wildcards make it take seconds or time out. Browse and search masks came
+  out 45 KB long without wildcards, so only "up next" uses one.
 
 ## Architecture
 

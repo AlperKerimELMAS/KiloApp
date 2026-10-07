@@ -3,34 +3,31 @@
 //!   to `/path/shot-N.png` (no Screen Recording permission needed).
 //! - `KILO_OPEN=search:QUERY` or `browse:ID`: open that page after Home.
 //! - `KILO_NO_ACTIVATE=1`: don't bring the app to the front on launch.
+//! - `KILO_IDLE=SECS`: shut the player helper down after SECS paused.
 //! - `KILO_SCENARIO=play:ID,wait:90,close,wait:60,pause,wait:330`: a scripted
 //!   session for measurements; each step is logged to stderr with the time
-//!   since launch.
+//!   since launch. Steps: `play:ID`, `pause`, `next`, `close`, `open`,
+//!   `playvideo:ID` (as a click on a music video's card), `browse:ID`,
+//!   `scroll:Y` (or `scroll:end`), `playall`, `shuffleall`,
+//!   `state` (logs the page and queue), `wait:SECS`.
 
 use std::cell::Cell;
-use std::ffi::c_void;
-use std::ptr::NonNull;
 
 use objc2::Message;
 use objc2_app_kit::NSWindow;
-use objc2_core_foundation::{CFRetained, CFString, CFURL};
+use objc2_core_foundation::{CFString, CFURL};
 use objc2_core_graphics::{CGBitmapContextCreateImage, CGColorSpace, CGContext};
 use objc2_image_io::CGImageDestination;
 
-unsafe extern "C-unwind" {
-    fn CGBitmapContextCreate(
-        data: *mut c_void,
-        width: usize,
-        height: usize,
-        bits_per_component: usize,
-        bytes_per_row: usize,
-        space: Option<&CGColorSpace>,
-        bitmap_info: u32,
-    ) -> Option<NonNull<CGContext>>;
-}
-
 thread_local! {
     static SHOTS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// `KILO_IDLE=SECS`: shut the player helper down after this long paused
+/// instead of 5 minutes (for measuring what's left afterwards).
+pub fn idle_shutdown() -> Option<std::time::Duration> {
+    let secs: f64 = std::env::var("KILO_IDLE").ok()?.parse().ok()?;
+    Some(std::time::Duration::from_secs_f64(secs))
 }
 
 pub fn activate_on_launch() -> bool {
@@ -80,13 +77,11 @@ fn render(window: &NSWindow, path: &str) {
     let scale = window.backingScaleFactor();
     let size = view.bounds().size;
     let (w, h) = ((size.width * scale) as usize, (size.height * scale) as usize);
-    // SAFETY: CoreGraphics calls with a freshly created color space and a
-    // context that CoreGraphics allocates itself (data = null).
+    let Some(space) = CGColorSpace::new_device_rgb() else { return };
+    // SAFETY: no data pointer: CoreGraphics allocates the pixels.
+    let Some(ctx) = (unsafe { crate::images::bitmap_context(None, w, h, 0, &space, crate::images::PREMULTIPLIED_BGRA) }) else { return };
+    // SAFETY: CoreGraphics and ImageIO calls with live objects created here.
     unsafe {
-        let Some(space) = CGColorSpace::new_device_rgb() else { return };
-        // kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little
-        let Some(ctx) = CGBitmapContextCreate(std::ptr::null_mut(), w, h, 8, 0, Some(&space), 2 | (2 << 12)) else { return };
-        let ctx: CFRetained<CGContext> = CFRetained::from_raw(ctx);
         CGContext::scale_ctm(Some(&ctx), scale, scale);
         layer.renderInContext(&ctx);
         let Some(image) = CGBitmapContextCreateImage(Some(&ctx)) else { return };
@@ -107,6 +102,13 @@ fn launched() -> &'static std::time::Instant {
 /// Marks process start (call first thing in `main`).
 pub fn mark_launch() {
     launched();
+}
+
+/// During a `KILO_SCENARIO`, logs what happens (player events, …).
+pub fn trace(what: impl FnOnce() -> String) {
+    if std::env::var_os("KILO_SCENARIO").is_some() {
+        log(&what());
+    }
 }
 
 fn log(step: &str) {
@@ -142,6 +144,30 @@ fn step(steps: Vec<String>, i: usize) {
         }
         "open" => {
             crate::app::reopen_window();
+            0.0
+        }
+        "browse" => {
+            crate::app::go(crate::app::Route::Browse { id: arg.into(), params: None });
+            0.0
+        }
+        "scroll" => {
+            crate::app::scroll_to(arg.parse().ok());
+            0.0
+        }
+        "playall" | "shuffleall" => {
+            crate::app::play_all(name == "shuffleall");
+            0.0
+        }
+        "next" => {
+            crate::app::next();
+            0.0
+        }
+        "playvideo" => {
+            crate::app::play_music_video(arg);
+            0.0
+        }
+        "state" => {
+            log(&crate::app::describe());
             0.0
         }
         "wait" => arg.parse::<f64>().unwrap_or(0.0),

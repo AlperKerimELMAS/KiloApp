@@ -131,12 +131,8 @@ pub fn image_layer_view(radius: f64, mtm: MainThreadMarker) -> Retained<NSView> 
 
 pub fn set_image(view: &NSView, image: Option<&crate::images::Image>) {
     if let Some(layer) = view.layer() {
-        let contents: Option<&AnyObject> = image.map(|i| {
-            let cf: &objc2_core_foundation::CFType = i;
-            cf.as_ref()
-        });
-        // SAFETY: a CGImage is valid layer contents.
-        unsafe { layer.setContents(contents) };
+        // SAFETY: an IOSurface is valid layer contents.
+        unsafe { layer.setContents(image.map(crate::images::Image::contents)) };
     }
 }
 

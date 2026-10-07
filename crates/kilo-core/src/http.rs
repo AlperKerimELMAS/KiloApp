@@ -1,6 +1,7 @@
 //! Minimal blocking HTTPS on the OS's TLS stack. Callers run it on worker
 //! threads; the UI thread never blocks on the network.
 
+use std::io::Read;
 use std::time::Duration;
 
 use ureq::Agent;
@@ -14,6 +15,10 @@ pub const USER_AGENT: &str =
 
 /// Largest response body we accept (browse pages are 0.2–1 MB of JSON).
 const MAX_BODY: u64 = 8 * 1024 * 1024;
+
+/// Per-connection buffer, each way. It must hold a response's headers and a
+/// request's headers (the cookie header is the largest, a few KB).
+const BUFFER: usize = 16 * 1024;
 
 #[derive(Clone)]
 pub struct Http {
@@ -34,17 +39,34 @@ impl Http {
             .timeout_global(Some(Duration::from_secs(20)))
             .user_agent(USER_AGENT)
             .http_status_as_error(false)
+            // ureq's default is 128 KB each way per pooled connection: 1.5 MB
+            // measured. Requests are a few KB and bodies stream through.
+            .input_buffer_size(BUFFER)
+            .output_buffer_size(BUFFER)
+            .max_idle_connections_per_host(2)
             .build()
             .into();
         Http { agent }
     }
 
     pub fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>> {
+        read_all(self.call_get(url, headers)?)
+    }
+
+    /// Only the first `max` bytes of the body; the rest is never downloaded.
+    pub fn get_prefix(&self, url: &str, headers: &[(&str, &str)], max: u64) -> Result<Vec<u8>> {
+        let mut resp = self.call_get(url, headers)?;
+        let mut out = Vec::new();
+        resp.body_mut().as_reader().take(max).read_to_end(&mut out).map_err(|e| Error::Http(e.to_string()))?;
+        Ok(out)
+    }
+
+    fn call_get(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response> {
         let mut req = self.agent.get(url);
         for (k, v) in headers {
             req = req.header(*k, *v);
         }
-        read(req.call())
+        checked(req.call())
     }
 
     pub fn post_json(&self, url: &str, headers: &[(&str, &str)], body: &str) -> Result<Vec<u8>> {
@@ -52,12 +74,14 @@ impl Http {
         for (k, v) in headers {
             req = req.header(*k, *v);
         }
-        read(req.send(body))
+        read_all(checked(req.send(body))?)
     }
 }
 
-fn read(resp: std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Vec<u8>> {
-    let mut resp = resp.map_err(|e| Error::Http(e.to_string()))?;
+type Response = ureq::http::Response<ureq::Body>;
+
+fn checked(resp: std::result::Result<Response, ureq::Error>) -> Result<Response> {
+    let resp = resp.map_err(|e| Error::Http(e.to_string()))?;
     let status = resp.status().as_u16();
     if status == 401 || status == 403 {
         return Err(Error::SignedOut);
@@ -65,5 +89,9 @@ fn read(resp: std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>
     if status >= 400 {
         return Err(Error::Http(format!("HTTP {status}")));
     }
+    Ok(resp)
+}
+
+fn read_all(mut resp: Response) -> Result<Vec<u8>> {
     resp.body_mut().with_config().limit(MAX_BODY).read_to_vec().map_err(|e| Error::Http(e.to_string()))
 }

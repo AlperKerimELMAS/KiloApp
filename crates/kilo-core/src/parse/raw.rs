@@ -1,7 +1,52 @@
 //! The slice of YouTube Music's response format that Kilo reads. Every
 //! struct defaults missing fields; unknown fields are skipped by serde.
+//!
+//! The same structs spell the field mask sent with "up next" requests
+//! (`Fields`), so the server returns exactly the fields parsed here.
 
 use serde::Deserialize;
+
+/// Writes a type's part of a field mask: `(field,field(sub),…)` for
+/// structs, nothing for plain values.
+pub trait Fields {
+    fn fields(_out: &mut String) {}
+}
+
+impl Fields for String {}
+impl Fields for u32 {}
+
+impl<T: Fields> Fields for Vec<T> {
+    fn fields(out: &mut String) {
+        T::fields(out);
+    }
+}
+
+impl<T: Fields> Fields for Option<T> {
+    fn fields(out: &mut String) {
+        T::fields(out);
+    }
+}
+
+/// The `X-Goog-FieldMask` asking for exactly the fields of `T`.
+pub fn mask<T: Fields>() -> String {
+    let mut out = String::new();
+    T::fields(&mut out);
+    // The top level goes without the outer parentheses.
+    out[1..out.len() - 1].to_owned()
+}
+
+/// `snake_case` → `camelCase`, as serde renames the fields.
+fn camel(snake: &str, out: &mut String) {
+    let mut upper = false;
+    for c in snake.chars() {
+        if c == '_' {
+            upper = true;
+        } else {
+            out.push(if upper { c.to_ascii_uppercase() } else { c });
+            upper = false;
+        }
+    }
+}
 
 macro_rules! raw {
     ($($(#[$m:meta])* struct $name:ident { $($field:ident : $ty:ty),* $(,)? })*) => {$(
@@ -9,6 +54,19 @@ macro_rules! raw {
         #[derive(Clone, Debug, Default, Deserialize)]
         #[serde(rename_all = "camelCase", default)]
         pub struct $name { $(pub $field: $ty),* }
+
+        impl Fields for $name {
+            fn fields(out: &mut String) {
+                out.push('(');
+                $(
+                    camel(stringify!($field), out);
+                    <$ty as Fields>::fields(out);
+                    out.push(',');
+                )*
+                out.pop();
+                out.push(')');
+            }
+        }
     )*};
 }
 
@@ -55,7 +113,7 @@ raw! {
     struct Shelf { title: Text, contents: Vec<ShelfItem>, continuations: Vec<Continuation> }
     struct Grid { header: Option<GridHeader>, items: Vec<ShelfItem> }
     struct GridHeader { grid_header_renderer: Option<BasicHeader> }
-    struct CardShelf { title: Text, subtitle: Text, thumbnail: ThumbnailHolder, contents: Vec<ShelfItem> }
+    struct CardShelf { title: LinkText, subtitle: Text, thumbnail: ThumbnailHolder, contents: Vec<ShelfItem> }
     struct DescriptionShelf { header: Text, description: Text }
     struct ItemSection { contents: Vec<ItemSectionEntry> }
     struct ItemSectionEntry {
@@ -84,8 +142,9 @@ raw! {
         navigation_endpoint: Option<Endpoint>,
         playlist_item_data: Option<PlaylistItemData>,
     }
-    struct FlexColumn { music_responsive_list_item_flex_column_renderer: ColumnText }
+    struct FlexColumn { music_responsive_list_item_flex_column_renderer: LinkColumnText }
     struct FixedColumn { music_responsive_list_item_fixed_column_renderer: ColumnText }
+    struct LinkColumnText { text: LinkText }
     struct ColumnText { text: Text }
     struct PlaylistItemData { video_id: String }
     struct NavigationButton { button_text: Text, click_command: Option<Endpoint> }
@@ -114,7 +173,10 @@ raw! {
     struct EditableInner { music_responsive_header_renderer: Option<ResponsiveHeader> }
 
     struct Text { runs: Vec<Run> }
-    struct Run { text: String, navigation_endpoint: Option<Endpoint> }
+    struct Run { text: String }
+    /// Text whose first run may link somewhere.
+    struct LinkText { runs: Vec<LinkRun> }
+    struct LinkRun { text: String, navigation_endpoint: Option<Endpoint> }
     struct Endpoint {
         browse_endpoint: Option<BrowseEndpoint>,
         watch_endpoint: Option<WatchEndpoint>,
@@ -127,7 +189,13 @@ raw! {
     }
     struct BrowseContext { browse_endpoint_context_music_config: Option<MusicConfig> }
     struct MusicConfig { page_type: String }
-    struct WatchEndpoint { video_id: String, playlist_id: Option<String> }
+    struct WatchEndpoint {
+        video_id: String,
+        playlist_id: Option<String>,
+        watch_endpoint_music_supported_configs: Option<WatchConfigs>,
+    }
+    struct WatchConfigs { watch_endpoint_music_config: Option<WatchMusicConfig> }
+    struct WatchMusicConfig { music_video_type: String }
     struct WatchPlaylistEndpoint { playlist_id: String }
 
     struct ThumbnailHolder { music_thumbnail_renderer: Option<MusicThumbnail> }
@@ -159,7 +227,8 @@ raw! {
         playlist_panel_video_renderer: Option<PanelVideo>,
         playlist_panel_video_wrapper_renderer: Option<PanelWrapper>,
     }
-    struct PanelWrapper { primary_renderer: PanelPrimary }
+    struct PanelWrapper { primary_renderer: PanelPrimary, counterpart: Vec<Counterpart> }
+    struct Counterpart { counterpart_renderer: PanelPrimary }
     struct PanelPrimary { playlist_panel_video_renderer: PanelVideo }
     struct PanelVideo {
         title: Text,
@@ -168,5 +237,6 @@ raw! {
         length_text: Text,
         video_id: String,
         thumbnail: ThumbnailList,
+        navigation_endpoint: Option<Endpoint>,
     }
 }

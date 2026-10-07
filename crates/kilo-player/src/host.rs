@@ -48,6 +48,12 @@ impl PlayerProcess {
         self.child.id()
     }
 
+    /// Waits for the helper to end and says how it did (once its events
+    /// have stopped, so it's ending anyway).
+    pub fn wait(mut self) -> Option<std::process::ExitStatus> {
+        self.child.wait().ok()
+    }
+
     /// Asks the helper to quit, and kills it if it hasn't exited within
     /// `grace`.
     pub fn quit(mut self, grace: Duration) {

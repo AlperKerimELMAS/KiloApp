@@ -69,13 +69,22 @@ impl Entry {
             _ => None,
         }
     }
+
+    pub fn is_music_video(&self) -> bool {
+        matches!(self.target, Target::Play { music_video: true, .. })
+    }
 }
 
 /// What activating an entry does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
     /// Play a song or video, optionally as part of a playlist.
-    Play { video_id: Box<str>, playlist_id: Option<Box<str>> },
+    Play {
+        video_id: Box<str>,
+        playlist_id: Option<Box<str>>,
+        /// An official music video, which may have a song version.
+        music_video: bool,
+    },
     /// Start playing a whole playlist or mix.
     PlayPlaylist { playlist_id: Box<str> },
     /// Open a page: album, playlist, artist, mood, chart…
@@ -111,21 +120,22 @@ impl Thumb {
     pub fn sized(&self, px: u32) -> String {
         let url = &*self.url;
         if url.contains("googleusercontent.com/") || url.contains("ggpht.com/") {
-            // Google's image CDN resizes on request: `…=w{W}-h{H}-…`.
+            // Google's image CDN resizes on request: `…=w{W}-h{H}-…`. JPEG
+            // quality 75 looks the same as the usual 90 at these sizes and
+            // is 40–55% smaller (WebP is no smaller, and much larger for
+            // art that started out as PNG).
             let base = url.rsplit_once('=').map_or(url, |(base, _)| base);
             let h = if self.wide { px * 9 / 16 } else { px };
-            return format!("{base}=w{px}-h{h}-l90-rj");
+            return format!("{base}=w{px}-h{h}-l75-rj");
         }
         if let Some(rest) = url.split("/vi/").nth(1) {
-            // Video thumbnails come in fixed sizes; pick the smallest that fits.
+            // Video thumbnails come in fixed sizes; pick the smallest that
+            // fits, as WebP (33–50% smaller than the JPEGs). Small sizes
+            // use the 16:9 one; the larger ones are 4:3 with black bars,
+            // which `images` crops off.
             if let Some(id) = rest.split('/').next() {
-                let file = match px {
-                    0..=120 => "default.jpg",
-                    121..=320 => "mqdefault.jpg",
-                    321..=480 => "hqdefault.jpg",
-                    _ => "sddefault.jpg",
-                };
-                return format!("https://i.ytimg.com/vi/{id}/{file}");
+                let file = if px <= 320 { "mqdefault" } else { "sddefault" };
+                return format!("https://i.ytimg.com/vi_webp/{id}/{file}.webp");
             }
         }
         url.to_owned()
@@ -139,15 +149,16 @@ mod tests {
     #[test]
     fn sizes_cdn_images_exactly() {
         let t = Thumb::new("https://lh3.googleusercontent.com/abc=w60-h60-l90-rj", false);
-        assert_eq!(t.sized(320), "https://lh3.googleusercontent.com/abc=w320-h320-l90-rj");
+        assert_eq!(t.sized(320), "https://lh3.googleusercontent.com/abc=w320-h320-l75-rj");
         let w = Thumb::new("https://yt3.googleusercontent.com/x=w544-h544-l90-rj", true);
-        assert_eq!(w.sized(320), "https://yt3.googleusercontent.com/x=w320-h180-l90-rj");
+        assert_eq!(w.sized(320), "https://yt3.googleusercontent.com/x=w320-h180-l75-rj");
     }
 
     #[test]
     fn picks_smallest_fitting_video_thumbnail() {
         let t = Thumb::new("https://i.ytimg.com/vi/wtXqClgroyY/hqdefault.jpg?sqp=abc", true);
-        assert_eq!(t.sized(300), "https://i.ytimg.com/vi/wtXqClgroyY/mqdefault.jpg");
-        assert_eq!(t.sized(96), "https://i.ytimg.com/vi/wtXqClgroyY/default.jpg");
+        assert_eq!(t.sized(300), "https://i.ytimg.com/vi_webp/wtXqClgroyY/mqdefault.webp");
+        assert_eq!(t.sized(96), "https://i.ytimg.com/vi_webp/wtXqClgroyY/mqdefault.webp");
+        assert_eq!(t.sized(568), "https://i.ytimg.com/vi_webp/wtXqClgroyY/sddefault.webp");
     }
 }
