@@ -13,9 +13,49 @@ workspace = true
 block2.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true
-objc2-app-kit.workspace = true
-objc2-foundation.workspace = true
-objc2-web-kit.workspace = true
+objc2-app-kit = { workspace = true, features = [
+    "NSApplication",
+    "NSGraphics",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSWindow",
+    "bitflags",
+    "block2",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSArray",
+    "NSEnumerator",
+    "NSError",
+    "NSHTTPCookie",
+    "NSString",
+    "NSURL",
+    "NSURLRequest",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+] }
+objc2-web-kit = { workspace = true, features = [
+    "WKContentRuleList",
+    "WKContentRuleListStore",
+    "WKFrameInfo",
+    "WKHTTPCookieStore",
+    "WKNavigation",
+    "WKNavigationAction",
+    "WKNavigationDelegate",
+    "WKPreferences",
+    "WKScriptMessage",
+    "WKScriptMessageHandler",
+    "WKUserContentController",
+    "WKUserScript",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKWebpagePreferences",
+    "WKWebsiteDataStore",
+    "bitflags",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+] }
 
 [dev-dependencies]
 # Only the scripted session in examples/ measures anything.

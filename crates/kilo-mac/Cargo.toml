@@ -21,11 +21,112 @@ kilo-player = { path = "../kilo-player" }
 block2.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true
-objc2-app-kit.workspace = true
-objc2-core-foundation.workspace = true
-objc2-core-graphics.workspace = true
-objc2-foundation.workspace = true
-objc2-image-io.workspace = true
-objc2-io-surface.workspace = true
-objc2-quartz-core.workspace = true
-objc2-web-kit.workspace = true
+objc2-app-kit = { workspace = true, features = [
+    "NSAccessibility",
+    "NSAppearance",
+    "NSApplication",
+    "NSAttributedString",
+    "NSButton",
+    "NSCell",
+    "NSClipView",
+    "NSColor",
+    "NSControl",
+    "NSEvent",
+    "NSFont",
+    "NSFontDescriptor",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSImageView",
+    "NSLayoutAnchor",
+    "NSLayoutConstraint",
+    "NSMenu",
+    "NSMenuItem",
+    "NSParagraphStyle",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScrollView",
+    "NSStackView",
+    "NSText",
+    "NSTextField",
+    "NSTextView",
+    "NSTrackingArea",
+    "NSUserInterfaceLayout",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+    "bitflags",
+    "block2",
+    "libc",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-quartz-core",
+] }
+objc2-core-foundation = { workspace = true, features = [
+    "CFData",
+    "CFDictionary",
+    "CFNumber",
+    "CFString",
+    "CFURL",
+] }
+objc2-core-graphics = { workspace = true, features = [
+    "CGBitmapContext",
+    "CGColor",
+    "CGColorSpace",
+    "CGContext",
+    "CGEvent",
+    "CGEventTypes",
+    "CGImage",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSDate",
+    "NSDictionary",
+    "NSHTTPCookie",
+    "NSLocale",
+    "NSNotification",
+    "NSObjCRuntime",
+    "NSOperation",
+    "NSPathUtilities",
+    "NSRunLoop",
+    "NSString",
+    "NSTimer",
+    "NSURL",
+    "NSURLRequest",
+    "NSUserDefaults",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+] }
+objc2-image-io = { workspace = true, features = [
+    "CGImageDestination",
+    "CGImageSource",
+    "objc2-core-graphics",
+] }
+objc2-io-surface = { workspace = true, features = [
+    "IOSurfaceRef",
+    "IOSurfaceTypes",
+    "libc",
+    "objc2-core-foundation",
+] }
+objc2-quartz-core = { workspace = true, features = [
+    "CADisplayLink",
+    "CALayer",
+    "CATransaction",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+] }
+objc2-web-kit = { workspace = true, features = [
+    "WKNavigation",
+    "WKNavigationAction",
+    "WKNavigationDelegate",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKWebsiteDataRecord",
+    "WKWebsiteDataStore",
+    "bitflags",
+    "block2",
+    "objc2-app-kit",
+] }

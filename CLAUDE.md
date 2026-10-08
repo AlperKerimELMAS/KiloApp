@@ -109,6 +109,11 @@ shortcuts are tested.
 - **Plain-key shortcuts must not reach the search field.** Space, M and the
   arrows act only when it isn't focused; menu items with them let the key
   through while it is (`validateMenuItem:` in `ui/mod.rs`).
+- **Apple's bindings compile only the headers each crate lists.** The
+  `objc2-*` framework crates have default features off (they'd build every
+  header: 127 MB per AppKit build). A missing type or method means adding
+  its header (the file in the binding's `src/generated/`, or the
+  `cfg(feature)` above the method) to that crate's `Cargo.toml`.
 - **In `define_class!`, a method returning `bool` can't `return` early:**
   only the last expression is converted to Objective-C's `BOOL`.
 - **The bundle is `LSUIElement`; the app makes itself regular.** Otherwise

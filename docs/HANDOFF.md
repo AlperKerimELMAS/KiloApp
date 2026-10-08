@@ -322,6 +322,17 @@ cargo test --workspace                    # 29 tests
 scripts/startup.sh dist/Kilo.app 4       # when the window, Home and the first image appear
 ```
 
+**Apple's bindings are trimmed.** The `objc2-*` framework crates have their
+default features off (they compiled every header: AppKit alone was 127 MB
+per build, plus CloudKit, Core Data, Metal…). Each crate's `Cargo.toml`
+lists the headers it uses. A missing type or method ("cannot find …", "no
+method named …") means adding its header there: the file under the binding
+crate's `src/generated/` that defines it (`NSView`, `WKWebView`…), or the
+`#[cfg(feature = …)]` above the method. From scratch, the app, both clippy
+runs and the tests build in 27 s instead of 58 s, into 0.9 GB instead of
+2.1 GB, and the app is the same. `target/` still collects stale builds as
+settings change (it had reached 8 GB): `cargo clean` empties it.
+
 **Developer switches** (environment variables, see `debug.rs`):
 - `KILO_SNAPSHOT=/path/x` writes the window to `x-N.png`. This terminal has
   no Screen Recording permission, so this is the only way to see the UI.

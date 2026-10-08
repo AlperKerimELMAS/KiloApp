@@ -16,6 +16,50 @@ kilo-probe = { path = "../kilo-probe" }
 block2.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true
-objc2-app-kit.workspace = true
-objc2-foundation.workspace = true
-objc2-quartz-core.workspace = true
+objc2-app-kit = { workspace = true, features = [
+    "NSAppearance",
+    "NSApplication",
+    "NSBitmapImageRep",
+    "NSButton",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSFont",
+    "NSGlassEffectView",
+    "NSGraphics",
+    "NSImage",
+    "NSImageRep",
+    "NSImageView",
+    "NSLayoutAnchor",
+    "NSLayoutConstraint",
+    "NSMenu",
+    "NSMenuItem",
+    "NSProgressIndicator",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScrollView",
+    "NSSearchField",
+    "NSSlider",
+    "NSStackView",
+    "NSTextField",
+    "NSUserInterfaceLayout",
+    "NSView",
+    "NSVisualEffectView",
+    "NSWindow",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-quartz-core",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSArray",
+    "NSString",
+    "NSTimer",
+    "bitflags",
+    "block2",
+    "objc2-core-foundation",
+] }
+objc2-quartz-core = { workspace = true, features = [
+    "CALayer",
+    "objc2-core-foundation",
+] }
