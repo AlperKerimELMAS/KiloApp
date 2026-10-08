@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use kilo_core::client::Client;
-use kilo_core::model::{Entry, Header, Section, Target};
+use kilo_core::model::{Entry, Header, Page, Section, Target};
 use kilo_core::parse;
 use kilo_core::queue::Queue;
 
@@ -65,21 +65,24 @@ pub(super) fn start(queue: Queue, follow: Option<Follow>) {
     }
 }
 
-/// "Play" / "Shuffle" on a page header. A long list starts right away with
-/// what's loaded; the rest joins the queue as it arrives.
+/// "Play" / "Shuffle" on a page header.
 pub fn play_all(shuffle: bool) {
-    let Some(Some((mut entries, header, rest))) = with(|a| {
-        let page = a.page.as_ref()?;
-        let list = page.sections.iter().find(|s| matches!(s, Section::List { .. }))?;
-        let rest = match list {
-            Section::List { continuation, .. } => continuation.clone(),
-            _ => None,
-        };
-        let entries = list.entries().iter().filter(|e| e.video_id().is_some()).cloned().collect::<Vec<_>>();
-        Some((entries, page.header.clone(), rest))
-    }) else {
-        return;
+    if let Some(Some(page)) = with(|a| a.page.clone()) {
+        play_page(&page, shuffle);
+    }
+}
+
+/// Plays the first list of `page` (an album's or playlist's tracks). A long
+/// list starts right away with what's loaded; the rest joins the queue as
+/// it arrives.
+pub(super) fn play_page(page: &Page, shuffle: bool) {
+    let Some(list) = page.sections.iter().find(|s| matches!(s, Section::List { .. })) else { return };
+    let rest = match list {
+        Section::List { continuation, .. } => continuation.clone(),
+        _ => None,
     };
+    let mut entries = list.entries().iter().filter(|e| e.video_id().is_some()).cloned().collect::<Vec<_>>();
+    let header = page.header.clone();
     if shuffle {
         with(|a| a.rng.shuffle(&mut entries));
     }

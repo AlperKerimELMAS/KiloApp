@@ -12,11 +12,19 @@ mod debug;
 #[cfg(target_os = "macos")]
 mod images;
 #[cfg(target_os = "macos")]
+mod keys;
+#[cfg(target_os = "macos")]
 mod login;
 #[cfg(target_os = "macos")]
 mod net;
 #[cfg(target_os = "macos")]
+mod pagecache;
+#[cfg(target_os = "macos")]
 mod paths;
+#[cfg(target_os = "macos")]
+mod settings;
+#[cfg(target_os = "macos")]
+mod strings;
 #[cfg(target_os = "macos")]
 mod ui;
 

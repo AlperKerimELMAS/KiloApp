@@ -32,6 +32,8 @@ pub enum Section {
         /// Token for more rows (long playlists).
         continuation: Option<Box<str>>,
     },
+    /// Song rows laid out in columns ("Quick picks").
+    Grid { title: Box<str>, entries: Vec<Entry> },
     /// Plain text, e.g. an artist's biography.
     Text { title: Box<str>, body: Box<str> },
 }
@@ -39,13 +41,13 @@ pub enum Section {
 impl Section {
     pub fn title(&self) -> &str {
         match self {
-            Section::Cards { title, .. } | Section::List { title, .. } | Section::Text { title, .. } => title,
+            Section::Cards { title, .. } | Section::List { title, .. } | Section::Grid { title, .. } | Section::Text { title, .. } => title,
         }
     }
 
     pub fn entries(&self) -> &[Entry] {
         match self {
-            Section::Cards { entries, .. } | Section::List { entries, .. } => entries,
+            Section::Cards { entries, .. } | Section::List { entries, .. } | Section::Grid { entries, .. } => entries,
             Section::Text { .. } => &[],
         }
     }
@@ -99,6 +101,15 @@ pub enum PageKind {
     Playlist,
     Artist,
     Other,
+}
+
+/// The signed-in account, as YouTube Music's account menu shows it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Account {
+    pub name: Box<str>,
+    /// e.g. "@someone".
+    pub handle: Box<str>,
+    pub photo: Option<Thumb>,
 }
 
 /// A thumbnail URL that can be asked for at any pixel size, so we only ever

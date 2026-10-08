@@ -9,11 +9,15 @@
   <key>CFBundleExecutable</key><string>Kilo</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2.0</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>0.3.0</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+  <!-- Every process starts as a background app, so the player and the
+       other helpers never show up in the Dock; the app itself turns into a
+       regular one first thing (app::run). -->
+  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticTermination</key><false/>
   <key>NSHumanReadableCopyright</key><string>Kilo is an unofficial client, not affiliated with YouTube or Google.</string>

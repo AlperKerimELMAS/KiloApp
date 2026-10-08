@@ -1,6 +1,8 @@
 //! Kilo's cross-platform core: talks to YouTube Music's web API, parses the
-//! answers into small models, and manages the play queue. No UI code here;
-//! each OS gets its own native front end on top of this crate.
+//! answers into small models, and manages the play queue. No UI code here,
+//! but what every front end shares is: the words (`strings`), the colors
+//! (`style`) and the keyboard shortcuts (`shortcuts`). Each OS gets its own
+//! native front end on top of this crate.
 
 pub mod auth;
 pub mod client;
@@ -9,6 +11,9 @@ pub mod image;
 pub mod model;
 pub mod parse;
 pub mod queue;
+pub mod shortcuts;
+pub mod strings;
+pub mod style;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

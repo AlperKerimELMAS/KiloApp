@@ -212,6 +212,14 @@ raw! {
     struct SearchResponse { contents: Option<SearchContents> }
     struct SearchContents { tabbed_search_results_renderer: Option<Tabs> }
 
+    struct AccountResponse { actions: Vec<AccountAction> }
+    struct AccountAction { open_popup_action: Option<OpenPopup> }
+    struct OpenPopup { popup: Popup }
+    struct Popup { multi_page_menu_renderer: Option<MultiPageMenu> }
+    struct MultiPageMenu { header: Option<MenuHeader> }
+    struct MenuHeader { active_account_header_renderer: Option<AccountHeader> }
+    struct AccountHeader { account_name: Text, channel_handle: Text, account_photo: ThumbnailList }
+
     struct NextResponse { contents: Option<NextContents> }
     struct NextContents { single_column_music_watch_next_results_renderer: Option<WatchNext> }
     struct WatchNext { tabbed_renderer: TabbedRenderer }

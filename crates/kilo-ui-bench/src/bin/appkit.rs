@@ -1,8 +1,11 @@
 //! Bench: a YouTube Music-like window built with stock AppKit views and
 //! Auto Layout (the window the Slint comparison in docs/PLAN.md used).
 //! `BENCH_IMAGES=30 appkit` prints the footprint every 2 s and quits after
-//! 10 s. `BENCH_*` switches add one control each (`BENCH_SLIDER`,
-//! `BENCH_FOCUS`, …), which is how the costly ones were found.
+//! 10 s. `BENCH_*` switches add one control or effect each (`BENCH_SLIDER`,
+//! `BENCH_FOCUS`, `BENCH_VIBRANCY`, `BENCH_GLASS`, …), which is how the
+//! costly ones were found. Measure it as an `.app` launched with `open`:
+//! system services (Metal's shader compiler, say) are only charged to it
+//! then.
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}
@@ -85,6 +88,7 @@ mod mac {
 
     pub fn main() {
         let mtm = MainThreadMarker::new().unwrap();
+        let flag = |k: &str| std::env::var_os(k).is_some();
         let images: usize = std::env::var("BENCH_IMAGES").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
@@ -125,6 +129,14 @@ mod mac {
                 };
                 iv.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
                 fixed(&iv, Some(160.0), Some(160.0));
+                if flag("BENCH_SHADOW") {
+                    iv.setWantsLayer(true);
+                    if let Some(layer) = iv.layer() {
+                        layer.setShadowOpacity(0.35);
+                        layer.setShadowRadius(10.0);
+                        layer.setShadowOffset(NSSize::new(0.0, -4.0));
+                    }
+                }
                 let views: Vec<Retained<NSView>> = vec![
                     Retained::into_super(Retained::into_super(iv)),
                     Retained::into_super(Retained::into_super(label(&format!("Album title number {i}"), 14.0, false, false, mtm))),
@@ -144,6 +156,13 @@ mod mac {
         scroll.setHasVerticalScroller(true);
         scroll.setDrawsBackground(false);
         scroll.setDocumentView(Some(&content));
+        if flag("BENCH_ROUNDED") {
+            scroll.setWantsLayer(true);
+            if let Some(layer) = scroll.layer() {
+                layer.setCornerRadius(12.0);
+                layer.setMasksToBounds(true);
+            }
+        }
 
         let search = NSSearchField::new(mtm);
         let search_ref = search.clone();
@@ -159,7 +178,14 @@ mod mac {
         ];
         let main_col = stack(&main_views, true, 0.0, mtm);
         let root = stack(&[Retained::into_super(sidebar), Retained::into_super(main_col)], false, 0.0, mtm);
-        let flag = |k: &str| std::env::var_os(k).is_some();
+        if flag("BENCH_GLASS") {
+            let glass = objc2_app_kit::NSGlassEffectView::new(mtm);
+            glass.setCornerRadius(25.0);
+            let inside = label("Glass", 14.0, false, false, mtm);
+            glass.setContentView(Some(&inside));
+            fixed(&glass, Some(300.0), Some(50.0));
+            root.addArrangedSubview(&glass);
+        }
         if flag("BENCH_SYMBOLS") {
             for name in ["play.fill", "backward.fill", "forward.fill", "house.fill", "chevron.left"] {
                 if let Some(img) = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None) {
@@ -208,7 +234,22 @@ mod mac {
             bar.addItem(&holder);
             app.setMainMenu(Some(&bar));
         }
-        window.setContentView(Some(&root));
+        if flag("BENCH_VIBRANCY") {
+            // The sidebar look: the desktop blurred behind the window.
+            let effect = objc2_app_kit::NSVisualEffectView::new(mtm);
+            effect.setMaterial(objc2_app_kit::NSVisualEffectMaterial::Sidebar);
+            effect.setBlendingMode(objc2_app_kit::NSVisualEffectBlendingMode::BehindWindow);
+            effect.setState(objc2_app_kit::NSVisualEffectState::Active);
+            effect.addSubview(&root);
+            root.setTranslatesAutoresizingMaskIntoConstraints(true);
+            root.setAutoresizingMask(
+                objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable | objc2_app_kit::NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            window.setContentView(Some(&effect));
+            root.setFrame(effect.bounds());
+        } else {
+            window.setContentView(Some(&root));
+        }
         window.makeKeyAndOrderFront(None);
         if !flag("BENCH_BACKGROUND") {
             app.activate();

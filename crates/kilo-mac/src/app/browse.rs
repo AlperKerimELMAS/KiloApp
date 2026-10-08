@@ -10,10 +10,11 @@ use kilo_core::parse;
 use kilo_core::queue::Queue;
 
 use super::queue::{self, Follow};
-use super::{mtm, session, set_content, show_error, show_loading, show_sign_in, with};
+use super::{Screen, mtm, session, set_content, show_error, show_loading, show_sign_in, with};
+use crate::strings::{S, t};
 use crate::ui::page::{Items, More, PageView};
 use crate::ui::shell;
-use crate::{images, net};
+use crate::{images, net, pagecache};
 
 thread_local! {
     static REFRESH_PENDING: Cell<bool> = const { Cell::new(false) };
@@ -29,6 +30,17 @@ pub enum Route {
 }
 
 impl Route {
+    /// What the page is, for the page cache.
+    fn cache_name(&self) -> String {
+        match self {
+            Route::Home => "home".into(),
+            Route::Explore => "explore".into(),
+            Route::Library => "library".into(),
+            Route::Browse { id, params } => format!("browse {id} {}", params.as_deref().unwrap_or("")),
+            Route::Search(q) => format!("search {q}"),
+        }
+    }
+
     /// The sidebar entry this route highlights, if any.
     pub(super) fn nav_index(&self) -> Option<usize> {
         match self {
@@ -41,6 +53,7 @@ impl Route {
 }
 
 pub fn go(route: Route) {
+    super::release_search_focus();
     let same = with(|a| a.history.last() == Some(&route)).unwrap_or(false);
     if !same {
         with(|a| a.history.push(route.clone()));
@@ -82,40 +95,88 @@ fn load(route: Route) {
         return;
     };
     let Some(client) = client else { return show_sign_in() };
-    show_loading();
+    // A page shown before appears at once; if it's older than half an hour,
+    // a fresh one follows.
+    let file = pagecache::file(&route.cache_name(), &client.config().hl);
+    let cached = pagecache::read(&file).and_then(|(json, fresh)| Some((Rc::new(parse_page(&route, &json).ok()?), fresh)));
+    let from_cache = cached.is_some();
+    match cached {
+        Some((page, fresh)) => {
+            crate::debug::trace(|| format!("page: from cache{}", if fresh { "" } else { " (stale)" }));
+            show_page(page);
+            with(|a| a.stale_page = !fresh);
+            if fresh {
+                return;
+            }
+        }
+        None => show_loading(),
+    }
+    crate::debug::trace(|| format!("page: {route:?} requested"));
     net::run(
         net::Pool::Api,
-        move || fetch(&client, &route),
-        move |result| {
+        move || {
+            let json = fetch(&client, &route)?;
+            let page = parse_page(&route, &json)?;
+            pagecache::write(&file, &json);
+            Ok(page)
+        },
+        move |result: kilo_core::Result<Page>| {
+            crate::debug::trace(|| "page: fetched".into());
             if with(|a| a.generation) != Some(generation) {
                 return; // the user moved on
             }
             match result {
+                // Over the stale copy only while it's untouched (not
+                // scrolled), and only if it changed.
+                Ok(page) if from_cache => {
+                    let untouched =
+                        with(|a| a.view.as_ref().is_some_and(|v| v.scrolled() < 1.0) && a.page.as_deref() != Some(&page)).unwrap_or(false);
+                    if untouched {
+                        show_page(Rc::new(page));
+                    }
+                }
                 Ok(page) => show_page(Rc::new(page)),
                 Err(kilo_core::Error::SignedOut) => show_sign_in(),
-                Err(e) => show_error(&e.to_string()),
+                Err(e) => {
+                    eprintln!("kilo: {e}");
+                    if !from_cache {
+                        show_error(t(S::LoadFailed));
+                    }
+                }
             }
         },
     );
 }
 
-/// The first part of a page. More shelves and the rest of long lists load
-/// as they scroll into view (`check_more`).
-fn fetch(client: &Client, route: &Route) -> kilo_core::Result<Page> {
+/// The first part of a page, raw. More shelves and the rest of long lists
+/// load as they scroll into view (`check_more`).
+fn fetch(client: &Client, route: &Route) -> kilo_core::Result<Vec<u8>> {
     match route {
-        Route::Home => parse::browse(&client.browse("FEmusic_home", None)?),
-        Route::Explore => parse::browse(&client.browse("FEmusic_explore", None)?),
-        Route::Library => parse::browse(&client.browse("FEmusic_liked_playlists", None)?),
-        Route::Browse { id, params } => parse::browse(&client.browse(id, params.as_deref())?),
-        Route::Search(q) => parse::search(&client.search(q, None)?),
+        Route::Home => client.browse("FEmusic_home", None),
+        Route::Explore => client.browse("FEmusic_explore", None),
+        Route::Library => client.browse("FEmusic_liked_playlists", None),
+        Route::Browse { id, params } => client.browse(id, params.as_deref()),
+        Route::Search(q) => client.search(q, None),
+    }
+}
+
+fn parse_page(route: &Route, json: &[u8]) -> kilo_core::Result<Page> {
+    match route {
+        Route::Search(_) => parse::search(json),
+        _ => parse::browse(json),
     }
 }
 
 /// Replaces the page area with `page`, at the top.
 pub(super) fn show_page(page: Rc<Page>) {
     let mtm = mtm();
+    if page.header.is_none() && page.sections.iter().all(|s| s.entries().is_empty() && !matches!(s, Section::Text { .. })) {
+        return super::show_empty();
+    }
     let Some(scale) = with(|a| {
         a.view = None;
+        a.screen = Screen::Page;
+        a.stale_page = false;
         a.page = Some(page.clone());
         a.shell.as_ref().map(|s| s.window.backingScaleFactor())
     })
@@ -136,6 +197,7 @@ pub(super) fn show_page(page: Rc<Page>) {
         }
         a.view = Some(view);
     });
+    crate::debug::trace(|| "page: shown".into());
     images::sweep_soon();
     check_more();
 }
@@ -184,6 +246,13 @@ pub(super) fn fetch_more(kind: More, token: Box<str>) {
         move || client.continuation(&t).and_then(|j| parse::browse(&j)),
         move |result| {
             let Ok(more) = result else {
+                // A page from a stale cache may hold expired tokens: load
+                // it again (the cache is fresh by now).
+                if with(|a| std::mem::take(&mut a.stale_page)).unwrap_or(false) {
+                    crate::debug::trace(|| "page: stale token; reloading".into());
+                    with(|a| a.fetching.retain(|f| *f != token));
+                    return reload();
+                }
                 // The token stays on the page, so a later scroll retries; not
                 // before a few seconds, though, or every scroll would (offline).
                 let when = DispatchTime::NOW.time(5_000_000_000);
@@ -286,11 +355,46 @@ pub fn activate(item: u32) {
     }
 }
 
+/// A card's play button: plays its track or mix as a click does, and an
+/// album or playlist without opening it.
+pub fn play_item(item: u32) {
+    let Some(Some((entry, client, queue_id))) = with(|a| {
+        let &(si, ei) = a.items.get(item as usize)?;
+        let entry = a.page.as_ref()?.sections.get(si)?.entries().get(ei)?.clone();
+        Some((entry, a.client.clone()?, a.queue_id))
+    }) else {
+        return;
+    };
+    let Target::Browse { id, params, .. } = entry.target else { return activate(item) };
+    net::run(
+        net::Pool::Api,
+        move || client.browse(&id, params.as_deref()).and_then(|j| parse::browse(&j)),
+        move |result| {
+            if with(|a| a.queue_id) != Some(queue_id) {
+                return; // something else started playing meanwhile
+            }
+            if let Ok(page) = result {
+                queue::play_page(&page, false);
+            }
+        },
+    );
+}
+
 /// Developer switch: scrolls the page to `y` points, or to its end.
 pub fn scroll_to(y: Option<f64>) {
     with(|a| {
         if let Some(v) = &a.view {
             v.scroll_to(y);
+        }
+    });
+}
+
+/// Scrolls the page by `points`, plus `screens` screenfuls (keyboard
+/// scrolling).
+pub fn scroll_by(points: f64, screens: f64) {
+    with(|a| {
+        if let Some(v) = &a.view {
+            v.scroll_by(points, screens);
         }
     });
 }

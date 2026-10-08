@@ -86,7 +86,7 @@ define_class!(
 impl Bar {
     pub fn new(kind: Kind, thickness: f64, fill: &objc2_app_kit::NSColor, mtm: MainThreadMarker) -> Retained<Self> {
         let track = CALayer::new();
-        track.setBackgroundColor(Some(&objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, 0.18).CGColor()));
+        track.setBackgroundColor(Some(&super::theme::palette().track.CGColor()));
         track.setCornerRadius(thickness / 2.0);
         let fill_layer = CALayer::new();
         fill_layer.setBackgroundColor(Some(&fill.CGColor()));
@@ -144,7 +144,10 @@ impl Bar {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         self.ivars().track.setFrame(NSRect::new(NSPoint::new(0.0, y), NSSize::new(b.size.width, t)));
-        self.ivars().fill.setFrame(NSRect::new(NSPoint::new(0.0, y), NSSize::new(b.size.width * self.ivars().value.get(), t)));
+        let value = self.ivars().value.get();
+        self.ivars().fill.setFrame(NSRect::new(NSPoint::new(0.0, y), NSSize::new(b.size.width * value, t)));
+        // Empty, its rounded ends would still show as a dot.
+        self.ivars().fill.setHidden(value <= 0.0);
         CATransaction::commit();
     }
 }

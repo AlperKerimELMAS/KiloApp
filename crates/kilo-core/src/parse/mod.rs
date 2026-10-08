@@ -8,7 +8,7 @@ mod raw;
 
 use std::sync::OnceLock;
 
-use crate::model::{Entry, Header, Page, PageKind, Section, Target, Thumb};
+use crate::model::{Account, Entry, Header, Page, PageKind, Section, Target, Thumb};
 use crate::{Error, Result};
 use raw::*;
 
@@ -21,6 +21,28 @@ use raw::*;
 pub fn next_mask() -> &'static str {
     static MASK: OnceLock<String> = OnceLock::new();
     MASK.get_or_init(raw::mask::<NextResponse>)
+}
+
+/// The mask for account requests: just the name, handle and photo (about
+/// 0.5 KB instead of 5.6 KB).
+pub fn account_mask() -> &'static str {
+    static MASK: OnceLock<String> = OnceLock::new();
+    MASK.get_or_init(raw::mask::<AccountResponse>)
+}
+
+/// The signed-in account, from an account menu answer.
+pub fn account(json: &[u8]) -> Result<Account> {
+    let r: AccountResponse = serde_json::from_slice(json).map_err(|e| Error::Parse(e.to_string()))?;
+    let h = r
+        .actions
+        .into_iter()
+        .find_map(|a| a.open_popup_action?.popup.multi_page_menu_renderer?.header?.active_account_header_renderer)
+        .ok_or_else(|| Error::Parse("no account in response".into()))?;
+    Ok(Account {
+        name: join(&h.account_name).into(),
+        handle: join(&h.channel_handle).into(),
+        photo: best(&h.account_photo.thumbnails).map(|u| Thumb::new(u, false)),
+    })
 }
 
 /// A browse page: home, explore, library, album, playlist, artist, or a
@@ -144,13 +166,13 @@ fn sections(contents: Vec<SectionItem>, page: &mut Page) {
         }
         if let Some(shelf) = item.music_carousel_shelf_renderer.or(item.music_immersive_carousel_shelf_renderer) {
             let title = shelf.header.as_ref().map(shelf_title).unwrap_or_default();
-            // Carousels of song rows ("Quick picks") read as lists.
+            // Carousels of song rows ("Quick picks") are grids of rows.
             let rows = shelf.contents.iter().filter(|i| i.music_responsive_list_item_renderer.is_some()).count();
             let as_list = rows * 2 > shelf.contents.len();
             let entries: Vec<Entry> = shelf.contents.into_iter().filter_map(entry).collect();
             if !entries.is_empty() {
                 page.sections.push(if as_list {
-                    Section::List { title: title.into(), entries, continuation: None }
+                    Section::Grid { title: title.into(), entries }
                 } else {
                     Section::Cards { title: title.into(), entries }
                 });
@@ -447,6 +469,22 @@ mod tests {
     }
 
     #[test]
+    fn carousels_of_song_rows_are_grids() {
+        let row = r#"{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song",
+            "navigationEndpoint":{"watchEndpoint":{"videoId":"DNB6LxIBJzc"}}}]}}}],"playlistItemData":{"videoId":"DNB6LxIBJzc"}}}"#;
+        let json = String::from(
+            r#"{"contents":{"singleColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
+                {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Quick picks"}]}}},
+                "contents":["#,
+        ) + row
+            + ","
+            + row
+            + r#"]}}]}}}}]}}}"#;
+        let page = browse(json.as_bytes()).unwrap();
+        assert!(matches!(&page.sections[0], Section::Grid { title, entries } if &**title == "Quick picks" && entries.len() == 2));
+    }
+
+    #[test]
     fn parses_album_tracks() {
         let json = br#"{"contents":{"twoColumnBrowseResultsRenderer":{
             "tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[{"musicResponsiveHeaderRenderer":{
@@ -491,6 +529,19 @@ mod tests {
         // A music video without a song version stays as it is.
         assert_eq!(queue[1].video_id(), Some("djV11Xbc914"));
         assert!(queue[1].is_music_video());
+    }
+
+    #[test]
+    fn parses_the_account() {
+        let json = br#"{"actions":[{"openPopupAction":{"popup":{"multiPageMenuRenderer":{"header":{"activeAccountHeaderRenderer":{
+            "accountName":{"runs":[{"text":"Ada"}]},"channelHandle":{"runs":[{"text":"@ada"}]},
+            "accountPhoto":{"thumbnails":[{"url":"https://yt3.ggpht.com/a=s88","width":88}]}}}}}}}]}"#;
+        let a = account(json).unwrap();
+        assert_eq!((&*a.name, &*a.handle), ("Ada", "@ada"));
+        assert_eq!(
+            account_mask(),
+            "actions(openPopupAction(popup(multiPageMenuRenderer(header(activeAccountHeaderRenderer(accountName(runs(text)),channelHandle(runs(text)),accountPhoto(thumbnails(url,width))))))))"
+        );
     }
 
     #[test]

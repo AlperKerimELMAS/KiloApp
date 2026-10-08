@@ -20,6 +20,7 @@ use std::io::Write;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
+use crate::strings::{self, S, t};
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchTime};
 use kilo_core::auth::{Cookie, is_sign_in_host, is_youtube_domain, parse_binary_cookies};
@@ -110,6 +111,7 @@ fn scheme_and_host(url: &NSURL) -> (String, String) {
 
 pub fn run() -> ! {
     let mtm = MainThreadMarker::new().expect("main thread");
+    strings::init();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
@@ -130,7 +132,7 @@ pub fn run() -> ! {
             false,
         );
         window.setReleasedWhenClosed(false);
-        window.setTitle(&NSString::from_str("Sign in to YouTube Music"));
+        window.setTitle(&NSString::from_str(t(S::SignInWindow)));
         window.setContentView(Some(&web_view));
         let delegate: Retained<Delegate> = msg_send![Delegate::alloc(mtm), init];
         window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
@@ -138,7 +140,11 @@ pub fn run() -> ! {
         web_view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         window.center();
         window.makeKeyAndOrderFront(None);
-        app.activate();
+        // In front of Kilo, which started it. (`activate()` is only a
+        // request since macOS 14, and was turned down: the window stayed
+        // behind.)
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
         let url = NSURL::URLWithString(&NSString::from_str(SIGN_IN_URL)).expect("valid url");
         web_view.loadRequest(&NSURLRequest::requestWithURL(&url));
         (window, web_view, delegate)

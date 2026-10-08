@@ -4,7 +4,7 @@
 //! models and drops them.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use serde_json::json;
 
@@ -67,6 +67,25 @@ impl Config {
         ["INNERTUBE_CLIENT_VERSION", "VISITOR_DATA", "HL", "GL"].map(field)
     }
 
+    /// Whether this config is older than a day (time to read the page again).
+    pub fn is_stale(&self) -> bool {
+        unix_now().saturating_sub(self.fetched) >= CONFIG_MAX_AGE_SECS
+    }
+
+    /// Loads a cached config, however old: a day-old client version still
+    /// works, so startup never waits for the page (see `is_stale`).
+    pub fn load_any(path: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let mut lines = text.lines();
+        Some(Config {
+            version: lines.next()?.to_owned(),
+            visitor: lines.next()?.to_owned(),
+            hl: lines.next()?.to_owned(),
+            gl: lines.next()?.to_owned(),
+            fetched: lines.next()?.parse().ok()?,
+        })
+    }
+
     /// Loads a cached config if it's fresh enough.
     pub fn load(path: &Path) -> Option<Self> {
         let text = std::fs::read_to_string(path).ok()?;
@@ -97,9 +116,9 @@ pub struct Client {
     masks: bool,
 }
 
-/// The server turned the field mask down (it validates every field name,
-/// so a renamed field would); requests go without it from then on.
-static MASK_REJECTED: AtomicBool = AtomicBool::new(false);
+/// Field masks the server turned down (it validates every field name, so
+/// a renamed field would): requests that would carry one go without it.
+static REJECTED_MASKS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 impl Client {
     pub fn new(http: Http, session: Session, config: Config) -> Self {
@@ -115,6 +134,23 @@ impl Client {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    /// The same client asking for content in language `hl` (`"en"`, `"tr"`…)
+    /// instead of the account's.
+    pub fn with_language(&self, hl: &str) -> Self {
+        let mut client = self.clone();
+        client.config.hl = hl.to_owned();
+        client
+    }
+
+    /// The signed-in account's name, handle and photo.
+    pub fn account(&self) -> Result<Vec<u8>> {
+        self.call("account/account_menu", json!({}), Some(crate::parse::account_mask()))
     }
 
     pub fn browse(&self, browse_id: &str, params: Option<&str>) -> Result<Vec<u8>> {
@@ -187,7 +223,7 @@ impl Client {
     /// Calls `endpoint`, with a field mask if given, so the answer holds only
     /// what Kilo parses. If the server rejects the mask, the request goes
     /// again without it.
-    fn call(&self, endpoint: &str, mut body: serde_json::Value, mask: Option<&str>) -> Result<Vec<u8>> {
+    fn call(&self, endpoint: &str, mut body: serde_json::Value, mask: Option<&'static str>) -> Result<Vec<u8>> {
         body["context"] = json!({
             "client": {
                 "clientName": "WEB_REMIX",
@@ -214,12 +250,15 @@ impl Client {
         ];
         let url = format!("{API}{endpoint}?prettyPrint=false");
         let body = body.to_string();
-        if let Some(mask) = mask.filter(|_| self.masks && !MASK_REJECTED.load(Ordering::Relaxed)) {
+        let rejected = |mask: &str| REJECTED_MASKS.lock().is_ok_and(|r| r.contains(&mask));
+        if let Some(mask) = mask.filter(|m| self.masks && !rejected(m)) {
             let mut masked = headers.to_vec();
             masked.push(("X-Goog-FieldMask", mask));
             match self.http.post_json(&url, &masked, &body) {
                 Err(Error::Status(400)) => {
-                    MASK_REJECTED.store(true, Ordering::Relaxed);
+                    if let Ok(mut r) = REJECTED_MASKS.lock() {
+                        r.push(mask);
+                    }
                     eprintln!("kilo: {endpoint} field mask rejected; sending full requests");
                 }
                 result => return result,

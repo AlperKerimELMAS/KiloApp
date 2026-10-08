@@ -8,7 +8,8 @@ A very lightweight YouTube Music desktop client. Every single kilobyte counts.
 | Memory, window open, not playing | | **31 MB** |
 | Paused for 5+ minutes | | **31 MB, 0% CPU** |
 | CPU while playing (one core) | 8.9% | 8.2% |
-| On disk | 1.4 GB (Chrome) | 2.4 MB |
+| Home on screen after launch | | **0.15 s** |
+| On disk | 1.4 GB (Chrome) | **1.4 MB** |
 
 Measured on one Mac (Apple Silicon, macOS 27); see
 [`docs/COMPARISON.md`](docs/COMPARISON.md) for how.
@@ -20,7 +21,14 @@ YouTube or Google. YouTube and YouTube Music are trademarks of Google LLC.
 
 - **Native UI.** AppKit on macOS, laid out by hand: only what's near the
   screen exists, and images are decoded at exactly the size they're drawn.
-  Windows and Linux front ends are planned, over the same portable core.
+  Light and dark, following the system or your choice. Windows and Linux
+  front ends are planned, over the same portable core, which already holds
+  what they'll share: the words, the colors and the keyboard shortcuts.
+- **In English or Turkish,** YouTube's content included: following your Mac,
+  or chosen from the account button (top right) or the View menu.
+- **Instant pages.** Pages you've seen open from a small cache on disk, so
+  Home is on screen 0.15 s after launch; ones older than half an hour
+  refresh in the background.
 - **YouTube's own player plays the audio,** in a hidden system web view, in a
   helper process. Kilo never downloads, captures or decodes media, and never
   blocks ads. Music videos play as their song version when there is one,
@@ -30,6 +38,28 @@ YouTube or Google. YouTube and YouTube Music are trademarks of Google LLC.
   where you left off (about 2 s).
 - **Browsing** uses YouTube Music's web API with your own signed-in session,
   the way music.youtube.com does.
+
+## Keyboard shortcuts
+
+One table for every platform (`kilo_core::shortcuts`; the Windows and
+Linux front ends to come share it): ⌘ on macOS is Ctrl there, and the
+sidebar follows each platform's habit. Plain keys (Space, M, the arrows)
+act whenever you're not typing in the search field.
+
+| | macOS | Windows, Linux |
+|---|---|---|
+| Play or pause | Space | Space |
+| Next, previous track | ⌘→, ⌘← | Ctrl+→, Ctrl+← |
+| 10 seconds forward, back | → ← (or ⇧⌘→, ⇧⌘←) | → ← (or Ctrl+Shift+→, Ctrl+Shift+←) |
+| Volume up, down | ⌘↑, ⌘↓ | Ctrl+↑, Ctrl+↓ |
+| Mute | M | M |
+| Search | ⌘F, ⌘L, ⌘K or / | Ctrl+F, Ctrl+L, Ctrl+K or / |
+| Leave the search field | Esc (clears it first) | Esc |
+| Back | ⌘[, ⌥← or the mouse's back button | Alt+←, the mouse's back button |
+| Home, Explore, Library | ⌘1, ⌘2, ⌘3 | Ctrl+1, Ctrl+2, Ctrl+3 |
+| Reload the page | ⌘R | Ctrl+R |
+| Collapse or expand the sidebar (also ☰) | ⌃⌘S | Ctrl+B |
+| Scroll | ↑ ↓, Page Up, Page Down, Home, End | the same |
 
 ## Requirements
 
@@ -55,8 +85,8 @@ The app is signed ad hoc, which is enough to run it on the Mac that built it.
   your password, and stores only YouTube's cookies, not your Google account
   session.
 - Kilo talks only to YouTube and Google. There's no telemetry.
-- **Sign Out** (in the Kilo menu) deletes your session and everything Kilo
-  stored.
+- **Sign Out** (the account button, top right, or the Kilo menu) deletes
+  your session and everything Kilo stored.
 - How Kilo protects your account, its known limitations, and how to report
   a vulnerability: [`SECURITY.md`](SECURITY.md).
 - On disk: WebKit's cookie store for Kilo (your session,

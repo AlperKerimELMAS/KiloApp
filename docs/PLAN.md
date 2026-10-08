@@ -284,7 +284,97 @@ SetStoreUpdateService (2.1 MB), as Activity Monitor would.
   as a full one (`cargo run --example masks`). The server rejects unknown
   field names with a 400 (Kilo then retries without), and nested `*`
   wildcards make it take seconds or time out. Browse and search masks came
-  out 45 KB long without wildcards, so only "up next" uses one.
+  out 45 KB long without wildcards, so only "up next" uses one (and the
+  account menu: 5,616 → 371 bytes).
+
+## UI redesign (v0.3, 2026-10-08)
+
+A Spotify / YouTube Music-like look, light and dark, English and Turkish,
+and an account button with Sign Out. Every ingredient was priced first in
+`kilo-ui-bench` (as an `.app` launched with `open`, against the same window
+without it):
+
+| Ingredient | Cost | Used? |
+|---|---|---|
+| `NSVisualEffectView`, behind-window blur, as the window's root | +0.2 MB | at first; dropped in the second round (below) |
+| `NSGlassEffectView` (Liquid Glass) | +1.2 MB per element | no |
+| Layer shadows on cards | +0.4 MB, more CPU on scroll | no |
+| A rounded panel that clips its content | +0.4 MB | no: laid out so nothing needs clipping |
+| Hover play button | one, shared, moved to the card under the mouse | yes |
+
+**Startup** (`scripts/startup.sh`, seconds since `main`, four launches):
+
+| | Before | After |
+|---|---|---|
+| Window on screen | 0.12–0.15 s | 0.13–0.15 s |
+| Home on screen | 0.93–1.05 s | **0.148–0.165 s** |
+| First thumbnail | after Home | **~0.17 s** |
+
+- Home comes from the page cache (`pagecache.rs`): YouTube's answer as sent,
+  keyed by route and language, 16 MB at most. Under 30 minutes old it's
+  shown with no request; up to 7 days old it's shown at once and refetched,
+  and the new one replaces it if the user hasn't scrolled and it differs.
+- The page config is used even when it's stale, and refreshed for the next
+  launch, so only the very first launch waits for it.
+- What's left is AppKit: `main` to a ready app is ~78 ms, and Kilo's window
+  ~55 ms of it (creating the `NSWindow` 23–27 ms, sidebar 6, player bar 4,
+  menu bar 4–7).
+
+**Memory** (`kilo-probe`, medians of several launches):
+
+| State | Before | After |
+|---|---|---|
+| A fixed playlist page | 31.4 MB | **31.2 MB** |
+| Home | 33.7 MB (30.4–36.6: Home's content changes run to run) | 35.5 MB, within that spread |
+| Playing | 141–143 MB | 142.6–144 MB |
+
+- Showing a cached page and then parsing the fresh one raised the footprint
+  2–4 MB (the heap fragments; `malloc_zone_pressure_relief` freed nothing).
+  Hence the 30-minute rule: a page that fresh is never parsed twice.
+- Card shelves now create only the cards near view sideways too, as lists
+  already did vertically.
+- Light/dark and language changes rebuild the window's views: 30–50 ms.
+
+**Size:**
+
+| | Before | After |
+|---|---|---|
+| Binary | 1,516 KB (v0.2) | **1,165 KB** (`opt-level = "z"`; the v0.3 code at `opt-level = 3` was 1,624 KB) |
+| App icon (`.icns`) | 995 KB, gradient | **318 KB**, flat dark |
+| `Kilo.app` | 2.4 MB | **1.42 MB** |
+
+`opt-level = "z"` kept the same startup and memory; parsing a 412 KB page
+went from 0.6 ms to 0.6–1.0 ms, which nobody can see.
+
+**Second round, after the owner's review (same day).** The blurred frame
+took the wallpaper's colors, so the sidebar looked like a separate part:
+the frame is now one plain color (the window's own background, as in
+Spotify), and the search field is a plain text field in Kilo's own pill
+instead of the system's bezel. Measured against the first round's build,
+alternating launches on the same cache:
+
+| State | First round | Second round |
+|---|---|---|
+| A fixed album page | 29.2, 29.4, 29.5, 29.7 MB | **28.2, 28.4, 28.5, 28.5 MB** |
+| Home | 34.4, 34.4, 36.9 MB | **32.8, 32.9, 33.7 MB** |
+| Binary | 1,158 KB | 1,175 KB (shortcuts, search pill, test steps) |
+
+- Image views now clip (`clipsToBounds`; AppKit had been turning their
+  layers' masking off), so rounded corners and circles cost what Core
+  Animation charges for them: included in the numbers above.
+- Shelves pass vertical scroll gestures to the page, and keyboard
+  shortcuts come from one table in `kilo-core` for every platform.
+
+**Width changes** (window resizing, the sidebar collapsing), main-thread time
+per change, 40 changes × 3 runs (`relayout:40`):
+
+| Page | Rebuilding what's live | Re-framing it |
+|---|---|---|
+| Home | 3.83–3.90 ms | **0.76–0.79 ms** |
+| An album | 3.84–3.89 ms | **0.16–0.17 ms** |
+
+That's what makes the sidebar's 0.22 s slide affordable: 11–15 frames, the
+slowest 3–8 ms of work including AppKit's layout.
 
 ## Architecture
 
@@ -320,7 +410,8 @@ Kilo (one binary, five roles)
 2. Thumbnails are requested at exact pixel size. Decoded pixels count
    toward the footprint only while visible; the rest are purgeable.
 3. JSON is parsed straight into small structs and then dropped. Going back to
-   a page re-requests it rather than keeping it in memory.
+   a page reads it again (from the disk cache when fresh) rather than
+   keeping it in memory.
 4. Lists render only their visible rows.
 5. A closed window means no UI in memory at all.
 6. WebKit only ever runs in the player helper, which exits when idle.

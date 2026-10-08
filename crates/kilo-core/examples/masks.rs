@@ -1,6 +1,6 @@
-//! Dev tool: `masks <cookies.binarycookies>` fetches "up next" answers with
-//! and without the field mask, checks that both parse to the same queue,
-//! and prints the sizes.
+//! Dev tool: `masks <cookies.binarycookies>` fetches "up next" and account
+//! answers with and without their field masks, checks that both parse the
+//! same, and prints the sizes.
 
 use kilo_core::auth::{Session, parse_binary_cookies};
 use kilo_core::client::{Client, Config};
@@ -37,4 +37,7 @@ fn main() {
             if same { "identical" } else { "DIFFERENT" }
         );
     }
+    let (a, b) = (full.account().expect("full"), masked.account().expect("masked"));
+    let same = parse::account(&a).expect("parse full") == parse::account(&b).expect("parse masked");
+    println!("{:<14} {:>5} B → {:>4} B  {}", "account", a.len(), b.len(), if same { "identical" } else { "DIFFERENT" });
 }

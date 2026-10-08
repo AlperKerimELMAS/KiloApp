@@ -14,6 +14,8 @@ use objc2_app_kit::NSWindowOcclusionState;
 use objc2_foundation::{NSString, NSTimer};
 
 use super::{App, queue, show_sign_in, with, with_shell};
+use crate::strings::{S, t};
+use crate::ui::shell;
 use crate::{images, net, ui};
 
 /// After this long paused, the player helper (and all of WebKit) is shut
@@ -96,7 +98,7 @@ fn ensure_player() {
                 send(Command::Volume(volume));
             }
         }
-        Err(e) => show_status(&format!("Couldn't start the player: {e}")),
+        Err(e) => show_status(&format!("{}: {e}", t(S::PlayerFailed))),
     }
 }
 
@@ -227,7 +229,7 @@ fn on_player_event(serial: u64, event: Event) {
         }
         Event::AdShowing => {
             stop_helper();
-            show_status("Playback needs a YouTube Music Premium account.");
+            show_status(t(S::PremiumNeeded));
         }
         Event::Exited => {
             // Quit, crashed, or shut down (by us when idle, or by macOS 27
@@ -304,10 +306,47 @@ fn seek_to(seconds: f64) {
     update_progress();
 }
 
+/// Moves playback `seconds` forward (or back, if negative).
+pub fn seek_by(seconds: f64) {
+    let Some(Some(to)) = with(|a| (a.duration > 0.0).then(|| (current_position(a) + seconds).clamp(0.0, a.duration))) else { return };
+    seek_to(to);
+}
+
 pub fn set_volume(volume: u8) {
     let volume = volume.min(100);
-    with(|a| a.volume = volume);
+    with(|a| {
+        a.volume = volume;
+        a.unmute_to = None;
+        if let Some(s) = &a.shell {
+            s.bar.volume.set_value(f64::from(volume) / 100.0);
+            ui::set_symbol(&s.bar.speaker, shell::speaker_symbol(volume));
+        }
+    });
     send(Command::Volume(volume));
+}
+
+/// Turns the volume up or down by `delta` percent.
+pub fn change_volume(delta: i16) {
+    let Some(volume) = with(|a| a.volume) else { return };
+    set_volume((i16::from(volume) + delta).clamp(0, 100) as u8);
+}
+
+/// Mutes, or brings back the volume from before muting.
+pub fn toggle_mute() {
+    let Some((volume, unmute_to)) = with(|a| (a.volume, a.unmute_to)) else { return };
+    match unmute_to {
+        Some(to) => set_volume(to),
+        None if volume > 0 => {
+            set_volume(0);
+            with(|a| a.unmute_to = Some(volume));
+        }
+        // Silent without having muted: back to full.
+        None => set_volume(100),
+    }
+}
+
+pub fn is_muted() -> bool {
+    with(|a| a.unmute_to.is_some()).unwrap_or(false)
 }
 
 fn current_position(a: &App) -> f64 {
@@ -321,6 +360,7 @@ pub(super) fn restore_bar() {
     let now = with(|a| {
         let s = a.shell.as_ref()?;
         s.bar.volume.set_value(f64::from(a.volume) / 100.0);
+        ui::set_symbol(&s.bar.speaker, shell::speaker_symbol(a.volume));
         let entry = a.queue.current()?.clone();
         ui::set_symbol(&s.bar.play, if a.playing { "pause.fill" } else { "play.fill" });
         s.bar.progress.set_enabled(a.duration > 0.0);
@@ -333,30 +373,19 @@ pub(super) fn restore_bar() {
     }
 }
 
-/// The player bar with nothing to play (after signing out).
-pub(super) fn clear_bar() {
-    with_shell(|s| {
-        s.bar.title.setStringValue(&NSString::from_str("Nothing playing"));
-        s.bar.artist.setStringValue(&NSString::from_str(""));
-        s.bar.time.setStringValue(&NSString::from_str(""));
-        s.bar.progress.set_value(0.0);
-        s.bar.progress.set_enabled(false);
-        ui::set_symbol(&s.bar.play, "play.fill");
-        ui::set_image(&s.bar.art, None);
-    });
-}
-
 fn show_now_playing(entry: &Entry) {
     with(|a| {
         let Some(s) = &a.shell else { return };
         let bar = &s.bar;
         bar.title.setStringValue(&NSString::from_str(&entry.title));
         bar.artist.setStringValue(&NSString::from_str(&entry.subtitle));
-        bar.time.setStringValue(&NSString::from_str(""));
+        bar.elapsed.setStringValue(&NSString::from_str(""));
+        bar.total.setStringValue(&NSString::from_str(""));
         bar.progress.set_value(0.0);
         ui::set_image(&bar.art, None);
         if let Some(t) = &entry.thumb {
-            let px = (44.0 * s.window.backingScaleFactor()) as u32;
+            // Square: a music video's 16:9 picture is cropped to fit.
+            let px = ui::square_px(56.0, s.window.backingScaleFactor(), t.wide);
             let art = bar.art.clone();
             images::load(t.sized(px), px, move |img| ui::set_image(&art, img.as_ref()));
         }
@@ -409,7 +438,8 @@ fn update_progress() {
         let Some(s) = &a.shell else { return };
         if a.duration > 0.0 {
             s.bar.progress.set_value(pos / a.duration);
-            s.bar.time.setStringValue(&NSString::from_str(&format!("{} / {}", clock(pos), clock(a.duration))));
+            s.bar.elapsed.setStringValue(&NSString::from_str(&clock(pos)));
+            s.bar.total.setStringValue(&NSString::from_str(&clock(a.duration)));
         }
     });
 }

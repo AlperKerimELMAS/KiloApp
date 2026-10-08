@@ -44,6 +44,11 @@ pub fn image_cache() -> PathBuf {
     caches().join("images")
 }
 
+/// Pages as YouTube last sent them (`pagecache`).
+pub fn page_cache() -> PathBuf {
+    caches().join("pages")
+}
+
 /// WebKit's other data for Kilo (site storage, and bookkeeping like its
 /// tracking prevention's record of sites seen).
 fn webkit() -> PathBuf {

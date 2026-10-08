@@ -29,6 +29,7 @@ fn main() {
         let kind = match s {
             Section::Cards { .. } => "cards",
             Section::List { .. } => "list",
+            Section::Grid { .. } => "grid",
             Section::Text { .. } => "text",
         };
         println!("[{kind}] {:?} ({} entries)", s.title(), s.entries().len());

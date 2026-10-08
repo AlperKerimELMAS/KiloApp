@@ -29,9 +29,9 @@ architecture, the status and the next steps. Details and measurements are in
 
 | Crate | What it is |
 |---|---|
-| `crates/kilo-core` | Portable: HTTP on the OS's TLS, auth from WebKit's cookie file, YouTube Music web API client, lean serde parsers, models, queue |
+| `crates/kilo-core` | Portable: HTTP on the OS's TLS, auth from WebKit's cookie file, YouTube Music web API client, lean serde parsers, models, queue; and what every front end shares: words (`strings.rs`), colors (`style.rs`), keyboard shortcuts (`shortcuts.rs`) |
 | `crates/kilo-player` | The player helper (WKWebView on macOS) and its one-line text protocol; `examples/session.rs` is a scripted, measured session |
-| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper`, `--prune-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in |
+| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper`, `--prune-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in; `src/ui/` the views (`theme.rs` light and dark); `keys.rs` the shortcuts; `pagecache.rs` pages on disk |
 | `crates/kilo-probe` | Measures footprint and CPU like the OS task managers, over the process tree plus the XPC services macOS charges to the app |
 | `crates/kilo-spike-web`, `crates/kilo-ui-bench` | Measurement labs |
 
@@ -44,14 +44,17 @@ cargo clippy --release --workspace --all-targets -- -D warnings      # also run 
 cargo test --workspace
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown
 scripts/measure.sh dist/Kilo.app wait:15           # launch, run a scenario, measure
+scripts/startup.sh dist/Kilo.app 4                 # time the window, Home and the first image
 ```
 
 Developer switches live in `crates/kilo-mac/src/debug.rs`: `KILO_SNAPSHOT`,
 `KILO_OPEN`, `KILO_NO_ACTIVATE`, `KILO_SCENARIO`. There's no Screen
 Recording permission, so use `KILO_SNAPSHOT` to see the UI. `KILO_SCENARIO`
-can also browse, scroll, play (`volume:0` first to stay silent) and print
-the page and queue state, which is how lazy loading and the queue are
-tested.
+can also browse, scroll, play (`volume:0` first to stay silent), switch
+`theme:` and `lang:`, take a `snap`, press keys (`key:cmd+right`; needs
+the app active), send scroll gestures to a shelf (`wheel:`), and print the
+page and queue state, which is how lazy loading, the queue and the
+shortcuts are tested.
 
 ## Things that bit us
 
@@ -77,7 +80,7 @@ tested.
   costs 398 MB.
 - **YouTube's API honors `X-Goog-FieldMask`,** but rejects any unknown field
   name with a 400, and nested `*` wildcards make it take seconds or time out.
-  Only "up next" requests carry a mask.
+  Only "up next" and account requests carry a mask.
 - **macOS 27 quits an idle helper itself** ("quiet safe quit", SIGTERM) a
   few minutes after playback stops, before or after Kilo's own 5-minute
   idle shutdown. Both are fine: the next play starts a fresh helper.
@@ -90,6 +93,36 @@ tested.
 - **Test sign-in and sign-out in a copy with another bundle id** (see
   `docs/HANDOFF.md`, section 6). The real app's helpers use the owner's
   session.
+- **Light/dark and the language are read when views are made.** A change
+  rebuilds the window (`app::rebuild_window`); nothing tracks it live. New
+  UI text goes in `kilo_core::strings` in both languages; colors come from
+  `kilo_core::style` (through `theme::palette()`), shortcuts from
+  `kilo_core::shortcuts`, so every platform shares them.
+- **One plain frame color, no blur.** A behind-window `NSVisualEffectView`
+  tints with the wallpaper, so the sidebar looked like a separate part.
+  Don't use `NSGlassEffectView` (+1.2 MB per element) or layer shadows
+  (+0.4 MB), and lay containers out so nothing needs clipping.
+- **Image views need `clipsToBounds`.** AppKit sets a hosted layer's
+  `masksToBounds` from the view's `clipsToBounds` (off by default since
+  macOS 14), so without it rounded corners stay square and wide images
+  spill out of square slots.
+- **Plain-key shortcuts must not reach the search field.** Space, M and the
+  arrows act only when it isn't focused; menu items with them let the key
+  through while it is (`validateMenuItem:` in `ui/mod.rs`).
+- **In `define_class!`, a method returning `bool` can't `return` early:**
+  only the last expression is converted to Objective-C's `BOOL`.
+- **The bundle is `LSUIElement`; the app makes itself regular.** Otherwise
+  macOS registers every helper as a regular app at launch and the Dock
+  flashes a second Kilo. So nothing activates Kilo for free: use
+  `app::bring_to_front` (`activate()` is only a request since macOS 14 and
+  gets turned down). Check with `lsappinfo listen +all`.
+- **A width change only re-frames the page** (`PageView::refresh`): new
+  block contents need autoresizing masks that keep them right when the
+  page is wider or narrower.
+- **Fresh cached pages are shown without parsing a second answer.**
+  Swapping in a refetched page right after showing the cached one cost
+  2–4 MB of heap fragmentation, so pages under 30 minutes old aren't
+  refetched (`pagecache.rs`).
 - **`app::with` silently skips when the state is already borrowed.** Don't
   call AppKit methods that can run the event loop (like `NSWindow.close`)
   inside it.
