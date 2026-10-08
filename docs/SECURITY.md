@@ -8,7 +8,14 @@ yet, and how to report a problem.
 
 Please report it privately, through the repository's **Security** tab →
 **Report a vulnerability**, rather than in a public issue. Say what you
-found, how to reproduce it, and what an attacker could do with it.
+found, how to reproduce it, and what an attacker could do with it. If you
+can't use that form, open an issue asking for a way to reach the
+maintainer, without any details of the problem.
+
+## Supported versions
+
+Fixes go into the latest version, on the `main` branch. Kilo has no
+prebuilt releases yet: update by building the latest code.
 
 ## What Kilo protects, and how
 
@@ -24,9 +31,10 @@ Any other link opens in your browser, where you can see where it goes.
   sign-in window's memory only, and it ends with that window. Kilo stores
   only YouTube's cookies, which is all it needs. (Older versions stored the
   whole session; Kilo deletes the rest at launch.)
-- Kilo sends the session only to music.youtube.com, over TLS that macOS
-  verifies. Every request, and every redirect, must be https; redirects
-  never carry the session along.
+- Kilo's own requests send the session only to music.youtube.com, over TLS
+  that macOS verifies. Every request, and every redirect, must be https;
+  redirects never carry the session along. (The player helper's web view
+  sends YouTube's cookies to YouTube, as a browser does.)
 - Thumbnails are downloaded without it.
 - **Sign Out** (the account button, or the Kilo menu) deletes everything
   WebKit stores for Kilo (the session, site data, caches) and every file
@@ -52,9 +60,9 @@ Any other link opens in your browser, where you can see where it goes.
 - Kilo adds no telemetry of its own (YouTube's player reports playback to
   YouTube, as on its website), and has no other servers, no update
   channel, no URL handlers.
-- Dependencies are few and pinned in `Cargo.lock`, and checked against the
-  [RustSec advisory database](https://rustsec.org). CI runs with read-only
-  permissions and pinned actions.
+- Dependencies are few and pinned in `Cargo.lock`. CI checks them against
+  the [RustSec advisory database](https://rustsec.org) on every push and
+  every week, runs with read-only permissions, and pins its actions.
 
 ## Known limitations
 
@@ -70,3 +78,7 @@ Any other link opens in your browser, where you can see where it goes.
   it comes with Developer ID signing.
 - Builds are signed ad hoc, not with a Developer ID, and aren't notarized.
   Build Kilo yourself, or only run a build you trust.
+- The measurement lab `kilo-spike-web` (not part of the app) has a `login`
+  command that keeps a whole Google account session in its own WebKit
+  store, without the app's protections. It's a development tool: use it
+  only if you know why, and delete its data afterwards.

@@ -1,29 +1,41 @@
-//! Developer switches (environment variables), all off by default:
-//! - `KILO_SNAPSHOT=/path/shot`: after each page appears, render the window
+//! Developer switches (environment variables), all off by default. They
+//! drive the app without a mouse or a screen, which is how Kilo's
+//! measurements and UI tests are run (`scripts/measure.sh`, `startup.sh`).
+//!
+//! - `KILO_SNAPSHOT=/path/shot`: after each page appears, renders the window
 //!   to `/path/shot-N.png` (no Screen Recording permission needed).
-//! - `KILO_OPEN=search:QUERY` or `browse:ID`: open that page after Home.
-//! - `KILO_NO_ACTIVATE=1`: don't bring the app to the front on launch.
-//! - `KILO_IDLE=SECS`: shut the player helper down after SECS paused.
-//! - `KILO_SCENARIO=play:ID,wait:90,close,wait:60,pause,wait:330`: a scripted
-//!   session for measurements; each step is logged to stderr with the time
-//!   since launch. Steps: `play:ID`, `pause`, `next`, `close`, `open`,
-//!   `playvideo:ID` (as a click on a music video's card), `browse:ID`,
-//!   `scroll:Y` (or `scroll:end`), `playall`, `shuffleall`, `volume:0-100`
-//!   (`volume:0` first to test playback silently), `theme:system|light|dark`,
-//!   `lang:system|en|tr`, `playcard:N` (a card's play button, item N of the
-//!   page), `snap` (a snapshot in 4 s, with `KILO_SNAPSHOT`; `snap:now` at
-//!   once), `state` (logs the
-//!   page and queue), `focus` (the search field), `key:SPEC` (a key press as
-//!   if typed: `space`, `m`, `cmd+right`, `shift+cmd+left`, `esc`, …),
-//!   `keys` (logs the volume, what has the focus and the search text),
-//!   `wheel:DX/DY/PHASE` (a trackpad scroll over the page's first shelf;
-//!   PHASE is `maybegin`, `began`, `changed`, `ended` or `none` for a mouse
-//!   wheel; logs where the page and the shelf are scrolled), `relayout:N`
-//!   (resizes the window N times; logs the page's average relayout time),
-//!   `app` (logs whether Kilo is active and owns the menu bar), `front`
-//!   (logs the frontmost app), `signin` and `cancelsignin` (in a copy with
-//!   another bundle id: the real app's helpers use the owner's session),
-//!   `wait:SECS`.
+//! - `KILO_OPEN=search:QUERY` or `browse:ID`: opens that page after Home.
+//! - `KILO_NO_ACTIVATE=1`: doesn't bring the app to the front at launch.
+//! - `KILO_IDLE=SECS`: shuts the player helper down after SECS paused
+//!   (instead of 5 minutes).
+//! - `KILO_SCENARIO=STEP,STEP,…`: a scripted session, run once the app is
+//!   signed in or on the sign-in screen. Each step is logged to stderr with
+//!   the time since launch, and so are player events and startup
+//!   milestones. For example
+//!   `KILO_SCENARIO=volume:0,play:lYBUbBu4W08,wait:90,close,wait:60,pause`.
+//!   Steps:
+//!   - Playback: `play:ID` (a song and its radio), `playvideo:ID` (as a
+//!     click on a music video's card), `playcard:N` (the play button of
+//!     the page's item N), `playall`, `shuffleall`, `pause` (play/pause),
+//!     `next`, `volume:0-100` (`volume:0` first to test silently).
+//!   - Pages: `browse:ID`, `scroll:Y` or `scroll:end`, `state` (logs the
+//!     page's sections and the queue), `relayout:N` (resizes the window N
+//!     times; logs the page's average relayout time).
+//!   - Window: `close`, `open`, `snap` (a snapshot in 4 s, with
+//!     `KILO_SNAPSHOT`) or `snap:now`, `theme:system|light|dark`,
+//!     `lang:system|en|tr`.
+//!   - Input: `focus` (the search field), `key:SPEC` (a key press as if
+//!     typed, such as `space`, `m`, `cmd+right`, `shift+cmd+left` or `esc`;
+//!     see `press` for the keys it knows; needs the app active), `keys`
+//!     (logs the volume, what has the focus and the search text),
+//!     `wheel:DX/DY/PHASE` (a trackpad scroll over the page's first shelf,
+//!     PHASE being `maybegin`, `began`, `changed`, `ended`, or `none` for a
+//!     mouse wheel; logs where the page and the shelf are scrolled to).
+//!   - App: `app` (logs whether Kilo is active and owns the menu bar),
+//!     `front` (logs the frontmost app), `signin` and `cancelsignin` (only
+//!     in a copy with another bundle id: the real one's helpers use your
+//!     own session; `docs/CONTRIBUTING.md` says how to make one).
+//!   - `wait:SECS`.
 
 use std::cell::Cell;
 

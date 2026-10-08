@@ -6,7 +6,10 @@ come later. Motto: **every single kilobyte counts.**
 
 **Start by reading `docs/HANDOFF.md`** for the story, the decisions, the
 architecture, the status and the next steps. Details and measurements are in
-`docs/PLAN.md` and `docs/COMPARISON.md`.
+`docs/PLAN.md` and `docs/COMPARISON.md`; how the code fits together is in
+`docs/ARCHITECTURE.md`. The repository is meant to go public: when behavior
+changes, update the public docs too (`README.md`, `docs/CONTRIBUTING.md`,
+`docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/CHANGELOG.md`).
 
 ## Ground rules
 
@@ -20,7 +23,7 @@ architecture, the status and the next steps. Details and measurements are in
   only if it measurably wins.
 - **Ask the owner first** before touching their data (cookie stores),
   pushing or publishing, or anything sensitive under YouTube's ToS.
-- **Keep the security boundaries** (`SECURITY.md`): the sign-in window and
+- **Keep the security boundaries** (`docs/SECURITY.md`): the sign-in window and
   the player only show allowlisted https hosts, images pass
   `kilo_core::image` before ImageIO, page messages are validated, and
   `bundle.sh` signs with the hardened runtime.
@@ -112,7 +115,7 @@ shortcuts are tested.
   spill out of square slots.
 - **Plain-key shortcuts must not reach the search field.** Space, M and the
   arrows act only when it isn't focused; menu items with them let the key
-  through while it is (`validateMenuItem:` in `ui/mod.rs`).
+  through while it is (`validateMenuItem:` in `ui/actions.rs`).
 - **Apple's bindings compile only the headers each crate lists.** The
   `objc2-*` framework crates have default features off (they'd build every
   header: 127 MB per AppKit build). A missing type or method means adding
@@ -144,7 +147,9 @@ shortcuts are tested.
   (growing from zero counts as a resize).
 - **`app::with` silently skips when the state is already borrowed.** Don't
   call AppKit methods that can run the event loop (like `NSWindow.close`)
-  inside it.
+  inside it, nor `images::load` when its callback needs the state: an
+  image that's already decoded comes back before `load` returns (this once
+  left the player bar without a cover from an album's second track on).
 
 ## Style
 

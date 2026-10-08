@@ -1,13 +1,17 @@
 # Kilo: handoff
 
-This is the project's story and current status, written for a new working
-session. `CLAUDE.md` at the repo root is the short version (loaded every
-session). For depth:
+This is the project's story and current status, written for whoever
+works on Kilo next: a maintainer, or a new AI coding session. `.claude/CLAUDE.md`
+is the short version (loaded every session). For depth:
+- `docs/ARCHITECTURE.md`: how the code fits together.
 - `docs/PLAN.md`: design and every measurement.
 - `docs/COMPARISON.md`: the measured comparison with Chrome.
+- `docs/CONTRIBUTING.md`: ground rules, workflows and pitfalls, for people.
+- `docs/CHANGELOG.md`: what changed in each version.
+- `docs/SECURITY.md`: what Kilo protects, and how to report a vulnerability.
 
-**Last updated:** 2026-10-08 (whole-project review) · **Version:** 0.3 ·
-**Branch:** `main` (no remote yet)
+**Last updated:** 2026-10-08 (final review before going public) ·
+**Version:** 0.3 · **Branch:** `main`, on GitHub (private for now)
 
 ---
 
@@ -140,7 +144,7 @@ Spotifast, a native Rust Spotify client that claims 100–250 MB.
      unrequested videos no longer pauses the next track on a stale event;
      quitting the helper after an ad or sign-out no longer blocks the UI.
 9. **Security review (2026-10-08).** Threat model: the user's Google session,
-   their Mac, their privacy. Summary in `SECURITY.md`. Fixed:
+   their Mac, their privacy. Summary in `docs/SECURITY.md`. Fixed:
    - **Sign-in window:** no address bar, so main-frame pages are limited to
      https Google/YouTube hosts (`kilo_core::auth::is_sign_in_host`; other
      links open in the browser) and the title bar shows the host.
@@ -330,7 +334,53 @@ Spotifast, a native Rust Spotify client that claims 100–250 MB.
       suggestions).
     - **Not done, on purpose or for later:** see section 6, item 8.
 
+13. **Final review before going public (2026-10-08).** Every source file
+    read again, item 12's changes checked for regressions, and each fix
+    checked against the code; the cover fix was seen in snapshots before
+    and after (`KILO_SNAPSHOT`, a track played twice, silently).
+    - **A regression from item 12:** the guard that keeps a slow cover off
+      the next track ran inside `app::with`, and `images::load` hands an
+      already-decoded image back at once, so the guard's own `with` found
+      the state borrowed. From an album's second track on (and for a track
+      played again), the player bar showed no cover. Fixed by loading
+      outside the borrow; the rule is now in `.claude/CLAUDE.md`
+      and `docs/CONTRIBUTING.md`.
+    - **Fixed:** the idle shutdown no longer stops a helper that's loading
+      a track chosen just before it fired; a late "signed out" from an old
+      session's "more of a page" can't end the session after it; a failed
+      fetch for a list the queue follows no longer reloads an unrelated
+      stale page; play requests (playlist, mix, song, card, song version,
+      radio) notice a session that ended, as pages do; a field mask counts
+      as rejected only if the same request works without it (an expired
+      token used to cost the session its "up next" mask); Sign Out deletes
+      only Kilo's old config file in `Application Support/Kilo` (and the
+      folder only when that empties it), no longer the whole folder; a
+      window closed or rebuilt mid-slide ends the sidebar animation (its
+      display link could stay behind and leave ☰ dead); the helper reads
+      which track it expects only after running the commands that waited
+      for YouTube's player; the sign-in helper exits if there are no
+      YouTube cookies to copy; overflow-proof arithmetic for the server's
+      thumbnail sizes and the letterbox crop.
+    - **Hardening:** `Http` states `RedirectAuthHeaders::Never` (ureq-proto
+      drops `Cookie` on every redirect: checked in its source); `forget`
+      bumps `player_serial`.
+    - **For going public:** a README for users (status, build, use,
+      questions), `docs/CONTRIBUTING.md`, `docs/ARCHITECTURE.md`,
+      `docs/CHANGELOG.md`, issue and pull request templates;
+      `docs/SECURITY.md` got
+      supported versions, a fallback contact and the spike's session; CI
+      checks RustSec on every push and weekly (`cargo-audit` 0.22.2,
+      pinned; 0 advisories in 82 crates today). The history was checked:
+      one author with the no-reply address, no secrets or personal data.
+    - Measured unchanged (`scripts/measure.sh APP wait:15 10`, window open
+      on Home, launches alternating): before 29.0 and 29.2 MB, after 29.1
+      and 29.3 MB, 0% CPU. Binary 1,208,496 → 1,208,560 bytes. Tests: 36
+      (were 34).
+
 ## 4. Architecture
+
+In depth, with the process model, threads and the tokens that guard late
+answers: `docs/ARCHITECTURE.md`. In short:
 
 ```
 Kilo.app/Contents/MacOS/Kilo  (one binary, five roles)
@@ -365,7 +415,7 @@ cargo fmt --all -- --check               # rustfmt.toml: width 140
 cargo clippy --release --workspace --all-targets -- -D warnings
 cargo clippy --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 cargo clippy --release -p kilo-probe -p kilo-player --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
-cargo test --workspace                    # 34 tests
+cargo test --workspace                    # 36 tests
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown [--csv f.csv]
 scripts/startup.sh dist/Kilo.app 4       # when the window, Home and the first image appear
 ```
@@ -454,7 +504,7 @@ the window's size), 27 MB with the window closed, 0% CPU when idle.
    of `NSTextField`s (about 6 KB and 9 constraints each, maybe 1 MB in all;
    bench the layer cost first). Consider shutting the helper down sooner
    while paused with the window closed (owner's call: resume then takes 2 s).
-3. **Session hardening** (`SECURITY.md`):
+3. **Session hardening** (`docs/SECURITY.md`):
    - **Watch:** the session now holds YouTube's cookies only (2026-10-08).
      If YouTube can't refresh it without Google's account cookies, Kilo
      will show its sign-in screen after some days; then keeping the
@@ -493,6 +543,10 @@ the window's size), 27 MB with the window closed, 0% CPU when idle.
      clone's `user.email`), and the old HANDOFF's personal details are out
      of every commit.
    - Optionally, Developer ID signing and notarization.
+   - Before making it public: turn on private vulnerability reporting
+     (Settings → Code security), which `docs/SECURITY.md` and the issue
+     templates send reports to. The outside review of item 12 is the
+     owner's, kept outside the repository on purpose.
 5. **Features:** a Now Playing view (big art plus Up next and Lyrics), a
    queue panel, like/dislike, add to playlist, the playing track marked in
    lists. More languages: add a column to `kilo_core::strings`.
@@ -523,6 +577,9 @@ the window's size), 27 MB with the window closed, 0% CPU when idle.
    (measured small); parser fixtures for every page type; telling a 403
    that isn't a signed-out session apart; Premium detection (owner's
    call). The sign-in window keeps its own Dock icon while it's open.
+   The sign-in window shows any google.com or youtube.com host; it could
+   be narrowed to the hosts Google's sign-in actually uses, once a real
+   sign-in can be tested.
 
 **Leftovers:**
 - `dist/` is git-ignored.

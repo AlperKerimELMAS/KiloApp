@@ -282,7 +282,8 @@ SetStoreUpdateService (2.1 MB), as Activity Monitor would.
   for exactly the fields it parses. The mask is generated from the parser's
   own structs (`parse/raw.rs`), and a masked answer parses to the same queue
   as a full one (`cargo run --example masks`). The server rejects unknown
-  field names with a 400 (Kilo then retries without), and nested `*`
+  field names with a 400 (Kilo then retries without, and drops the mask
+  for good if that works), and nested `*`
   wildcards make it take seconds or time out. Browse and search masks came
   out 45 KB long without wildcards, so only "up next" uses one (and the
   account menu: 5,616 → 371 bytes).
@@ -311,7 +312,8 @@ without it):
 | First thumbnail | after Home | **~0.17 s** |
 
 - Home comes from the page cache (`pagecache.rs`): YouTube's answer as sent,
-  keyed by route and language, 16 MB at most. Under 30 minutes old it's
+  keyed by route, language and (since the whole-project review) sign-in,
+  16 MB at most. Under 30 minutes old it's
   shown with no request; up to 7 days old it's shown at once and refetched,
   and the new one replaces it if the user hasn't scrolled and it differs.
 - The page config is used even when it's stale, and refreshed for the next
@@ -378,7 +380,8 @@ slowest 3–8 ms of work including AppKit's layout.
 
 ## Architecture
 
-As built (the crates are described in `docs/HANDOFF.md`, section 4):
+As built (the crates are described in `docs/HANDOFF.md`, section 4, and in
+depth in `docs/ARCHITECTURE.md`):
 
 ```
 Kilo (one binary, five roles)

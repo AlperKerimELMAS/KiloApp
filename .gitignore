@@ -2,3 +2,5 @@
 *.csv
 .DS_Store
 /dist
+# Claude Code: personal settings (the shared instructions are .claude/CLAUDE.md)
+/.claude/settings.local.json
