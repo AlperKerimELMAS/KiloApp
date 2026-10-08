@@ -517,7 +517,7 @@ fn check_signed_in(config: &WKWebViewConfiguration, then: impl Fn(bool) + 'stati
     let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
         // SAFETY: WebKit passes a valid array for the duration of the call.
         let cookies = unsafe { cookies.as_ref() };
-        then(cookies.iter().any(|c| c.name().to_string() == "__Secure-3PAPISID" && c.domain().to_string().ends_with("youtube.com")));
+        then(cookies.iter().any(|c| c.name().to_string() == "__Secure-3PAPISID" && is_youtube_domain(&c.domain().to_string())));
     });
     // SAFETY: main-thread WebKit calls.
     unsafe { config.websiteDataStore().httpCookieStore().getAllCookies(&done) };
@@ -726,4 +726,11 @@ fn mb(bytes: u64) -> String {
 fn log(msg: &str) {
     let t = with_state(|s| s.phase_at.elapsed().as_secs_f64());
     println!("[{t:6.1}s] {msg}");
+}
+
+/// youtube.com or a subdomain of it, exactly (`notyoutube.com` isn't), as
+/// `kilo_core::auth::is_youtube_domain` checks it.
+fn is_youtube_domain(domain: &str) -> bool {
+    let domain = domain.strip_prefix('.').unwrap_or(domain);
+    domain.strip_suffix("youtube.com").is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
 }

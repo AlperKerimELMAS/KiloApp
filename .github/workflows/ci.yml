@@ -25,9 +25,9 @@ jobs:
       - run: rustup target add x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --release --workspace --all-targets -- -D warnings
-      - run: cargo clippy --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --locked --release --workspace --all-targets -- -D warnings
+      - run: cargo clippy --locked --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+      - run: cargo test --locked --workspace
 
   linux:
     name: Linux (portable crates)
@@ -38,5 +38,5 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --release -p kilo-core -p kilo-player -p kilo-probe --all-targets -- -D warnings
-      - run: cargo test -p kilo-core -p kilo-player -p kilo-probe
+      - run: cargo clippy --locked --release -p kilo-core -p kilo-player -p kilo-probe --all-targets -- -D warnings
+      - run: cargo test --locked -p kilo-core -p kilo-player -p kilo-probe

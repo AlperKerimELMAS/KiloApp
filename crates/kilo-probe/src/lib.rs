@@ -73,17 +73,41 @@ pub fn process_trees(roots: &[u32]) -> Vec<u32> {
 /// the number of processes sampled, or `None` once every root has exited.
 /// Descendants that exit between listing and sampling are skipped.
 pub fn sample_trees(roots: &[u32]) -> Option<(Sample, usize)> {
-    let mut total = Sample::default();
-    let mut count = 0;
-    let mut root_alive = false;
-    for pid in process_trees(roots) {
-        if let Ok(s) = sample(pid) {
-            total += s;
-            count += 1;
-            root_alive |= roots.contains(&pid);
+    let each = sample_each(roots)?;
+    Some((total(&each), each.len()))
+}
+
+/// Samples `roots` and all their descendants, each on its own, or `None`
+/// once every root has exited.
+pub fn sample_each(roots: &[u32]) -> Option<Vec<(u32, Sample)>> {
+    let each: Vec<(u32, Sample)> = process_trees(roots).into_iter().filter_map(|pid| Some((pid, sample(pid).ok()?))).collect();
+    each.iter().any(|(pid, _)| roots.contains(pid)).then_some(each)
+}
+
+/// The sum of `samples`.
+pub fn total(samples: &[(u32, Sample)]) -> Sample {
+    samples.iter().fold(Sample::default(), |mut t, (_, s)| {
+        t += *s;
+        t
+    })
+}
+
+/// The CPU time (ns) and wakeups the processes used between two samples.
+/// Counters are per process, for their whole lives, so only processes in
+/// both samples count: one that just appeared would add its whole past, and
+/// one that exited would take its whole past away. (What a process did in
+/// the interval it started or exited in is lost.)
+pub fn used_between(before: &[(u32, Sample)], after: &[(u32, Sample)]) -> (u64, Option<u64>) {
+    let mut cpu = 0;
+    let mut wakeups = None;
+    for (pid, now) in after {
+        let Some((_, then)) = before.iter().find(|(p, _)| p == pid) else { continue };
+        cpu += now.cpu_ns.saturating_sub(then.cpu_ns);
+        if let (Some(n), Some(t)) = (now.wakeups, then.wakeups) {
+            wakeups = Some(wakeups.unwrap_or(0) + n.saturating_sub(t));
         }
     }
-    root_alive.then_some((total, count))
+    (cpu, wakeups)
 }
 
 /// Per-process samples for `roots` and all their helpers, with executable
@@ -112,5 +136,22 @@ fn strip_exe(name: &str) -> &str {
     match name.len().checked_sub(4) {
         Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".exe") => &name[..i],
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(cpu_s: u64) -> Sample {
+        Sample { cpu_ns: cpu_s * 1_000_000_000, wakeups: Some(cpu_s), ..Sample::default() }
+    }
+
+    #[test]
+    fn processes_coming_and_going_dont_skew_cpu() {
+        // The helper (20 s of CPU so far) exits; the parent used 1 s.
+        assert_eq!(used_between(&[(1, s(10)), (2, s(20))], &[(1, s(11))]), (1_000_000_000, Some(1)));
+        // A process with a long past appears: its past isn't counted.
+        assert_eq!(used_between(&[(1, s(10))], &[(1, s(12)), (3, s(500))]), (2_000_000_000, Some(2)));
     }
 }

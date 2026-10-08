@@ -24,7 +24,7 @@ fn main() {
         ("mix", full.next_playlist(mix), masked.next_playlist(mix)),
     ] {
         let (a, b) = (a.expect("full"), b.expect("masked"));
-        let (qa, qb) = (parse::up_next(&a).expect("parse full"), parse::up_next(&b).expect("parse masked"));
+        let (qa, qb) = (parse::up_next(&a).expect("parse full").entries, parse::up_next(&b).expect("parse masked").entries);
         // Radios are shuffled on every request: compare the tracks both have.
         let shared: Vec<_> = qa.iter().filter_map(|x| qb.iter().find(|y| y.video_id() == x.video_id()).map(|y| (x, y))).collect();
         let same = !shared.is_empty() && shared.iter().all(|(x, y)| x == y);
@@ -37,6 +37,20 @@ fn main() {
             if same { "identical" } else { "DIFFERENT" }
         );
     }
+    // More of the mix: the continuation's own mask.
+    let first = parse::up_next(&masked.next_playlist(mix).expect("mix")).expect("parse mix");
+    let token = first.continuation.expect("a mix is endless");
+    let (a, b) = (full.next_continuation(mix, &token).expect("full"), masked.next_continuation(mix, &token).expect("masked"));
+    let (qa, qb) = (parse::up_next(&a).expect("parse full"), parse::up_next(&b).expect("parse masked"));
+    println!(
+        "{:<14} {:>5} KB → {:>4} KB  {} tracks, {}, more: {}",
+        "mix, more",
+        a.len() / 1024,
+        b.len() / 1024,
+        qb.entries.len(),
+        if qa.entries == qb.entries { "identical" } else { "DIFFERENT" },
+        qb.continuation.is_some()
+    );
     let (a, b) = (full.account().expect("full"), masked.account().expect("masked"));
     let same = parse::account(&a).expect("parse full") == parse::account(&b).expect("parse masked");
     println!("{:<14} {:>5} B → {:>4} B  {}", "account", a.len(), b.len(), if same { "identical" } else { "DIFFERENT" });

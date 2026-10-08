@@ -8,8 +8,8 @@ fn main() {
     let t = std::time::Instant::now();
     if args[0] == "next" {
         let q = kilo_core::parse::up_next(&data).expect("parse");
-        println!("{} queue entries in {:?}", q.len(), t.elapsed());
-        for e in q.iter().take(3) {
+        println!("{} queue entries (more: {}) in {:?}", q.entries.len(), q.continuation.is_some(), t.elapsed());
+        for e in q.entries.iter().take(3) {
             println!("  {} — {} [{}] {:?}", e.title, e.subtitle, e.duration, e.video_id());
         }
         return;

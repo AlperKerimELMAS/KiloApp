@@ -41,7 +41,7 @@ thread_local! {
 /// instead of 5 minutes (for measuring what's left afterwards).
 pub fn idle_shutdown() -> Option<std::time::Duration> {
     let secs: f64 = std::env::var("KILO_IDLE").ok()?.parse().ok()?;
-    Some(std::time::Duration::from_secs_f64(secs))
+    std::time::Duration::try_from_secs_f64(secs).ok()
 }
 
 pub fn activate_on_launch() -> bool {

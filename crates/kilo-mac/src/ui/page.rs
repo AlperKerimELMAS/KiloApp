@@ -373,6 +373,7 @@ impl PageView {
                 l.setFrame(NSRect::new(NSPoint::new(PAD, 6.0), NSSize::new(width - PAD, 28.0)));
                 l.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
                 let holder = FlippedView::new(mtm);
+                holder.setFrameSize(NSSize::new(width, b.h));
                 holder.addSubview(&l);
                 Retained::into_super(holder)
             }
@@ -390,6 +391,7 @@ impl PageView {
                 p.setFrame(NSRect::new(NSPoint::new(PAD, 0.0), NSSize::new(width - PAD, TEXT)));
                 p.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
                 let holder = FlippedView::new(mtm);
+                holder.setFrameSize(NSSize::new(width, b.h));
                 holder.addSubview(&p);
                 Retained::into_super(holder)
             }
@@ -433,6 +435,7 @@ impl PageView {
         let e = &self.page.sections[si].entries()[ei];
         let w = art_width(e);
         let card = ItemView::new(self.ids[si][ei], 8.0, mtm);
+        card.set_label(&e.title, &e.subtitle);
         card.setFrameSize(NSSize::new(w + 2.0 * PAD, SHELF));
         let art = image_layer_view(if is_artist(e) { ART / 2.0 } else { 6.0 }, mtm);
         art.setFrame(NSRect::new(NSPoint::new(PAD, PAD), NSSize::new(w, ART)));
@@ -465,6 +468,7 @@ impl PageView {
                 continue;
             }
             let pill = ItemView::new(id, 18.0, mtm);
+            pill.set_label(&e.title, "");
             let text = frame_label(&e.title, 14.0, Weight::Medium, false, mtm);
             let tw = text.cell().map_or(120.0, |c| c.cellSize().width).ceil().min(260.0);
             text.setFrame(NSRect::new(NSPoint::new(16.0, 9.0), NSSize::new(tw, 18.0)));
@@ -489,6 +493,10 @@ impl PageView {
         let mtm = self.mtm;
         let e = &self.page.sections[si].entries()[ei];
         let row = ItemView::new(self.ids[si][ei], 6.0, mtm);
+        // Its size first: its labels' autoresizing masks follow later
+        // changes, and would take growing from zero as one.
+        row.setFrameSize(NSSize::new(width, ROW));
+        row.set_label(&e.title, &e.subtitle);
         let x = 60.0;
         if let Some(t) = &e.thumb {
             let art = image_layer_view(if is_artist(e) { ROW_THUMB / 2.0 } else { 4.0 }, mtm);

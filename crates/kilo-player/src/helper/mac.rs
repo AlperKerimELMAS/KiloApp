@@ -13,7 +13,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSArray, NSError, NSHTTPCookie, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest, ns_string};
 use objc2_web_kit::{
-    WKAudiovisualMediaTypes, WKContentRuleList, WKContentRuleListStore, WKInactiveSchedulingPolicy, WKNavigationAction,
+    WKAudiovisualMediaTypes, WKContentRuleList, WKContentRuleListStore, WKInactiveSchedulingPolicy, WKNavigation, WKNavigationAction,
     WKNavigationActionPolicy, WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKUserScript,
     WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration,
 };
@@ -39,10 +39,14 @@ const PAGE_CSS: &str = "*,*::before,*::after{animation:none!important;transition
 #player-control-container,#header-bar,ytm-mobile-topbar-renderer,ytm-watch,ytm-pivot-bar-renderer,video{display:none!important}";
 
 /// Page-world bridge. Media events go to the helper as one-line messages;
-/// `__kilo` drives YouTube's player through its own API.
+/// `__kilo` drives YouTube's player through its own API. `player` says that
+/// API is there: until then, the helper holds its commands.
 const BRIDGE: &str = r#"(() => {
   const post = (m) => { try { webkit.messageHandlers.kilo.postMessage(m); } catch (e) {} };
-  let video = null, player = null;
+  let video = null, player = null, ready = false;
+  const readyCheck = () => {
+    if (!ready && player && typeof player.loadVideoById === 'function') { ready = true; post('player'); }
+  };
   const id = () => { try { return player.getVideoData().video_id || '-'; } catch (e) { return '-'; } };
   const report = (kind) => {
     const d = isFinite(video.duration) ? video.duration : 0;
@@ -58,10 +62,12 @@ const BRIDGE: &str = r#"(() => {
       adObserver.observe(p, { attributes: true, attributeFilter: ['class'] });
       adCheck();
     }
+    readyCheck();
     const v = document.querySelector('video');
     if (v && v !== video) {
       video = v;
-      v.addEventListener('playing', () => report('playing'));
+      v.addEventListener('loadedmetadata', readyCheck);
+      v.addEventListener('playing', () => { readyCheck(); report('playing'); });
       v.addEventListener('pause', () => { if (!v.ended) report('paused'); });
       v.addEventListener('waiting', () => report('buffering'));
       v.addEventListener('ended', () => report('ended'));
@@ -87,7 +93,8 @@ const BRIDGE: &str = r#"(() => {
     // a stale event about the previous track must not pause the next one.
     pauseUnless(want) { if (id() !== want) p().pauseVideo(); },
     seek(s) { p().seekTo(s, true); },
-    volume(v) { const q = p(); q.unMute(); q.setVolume(v); if (video) video.muted = false; },
+    // The volume first, then unmuted: never a moment louder than asked.
+    volume(v) { const q = p(); q.setVolume(v); if (v > 0) q.unMute(); else q.mute(); if (video) video.muted = v === 0; },
     tiny() { const q = p(); if (q.setPlaybackQualityRange) q.setPlaybackQualityRange('tiny', 'tiny'); },
   };
 })();"#;
@@ -102,13 +109,16 @@ struct Helper {
     /// WebKit holds delegates weakly.
     delegate: Retained<Delegate>,
     page_requested: bool,
+    /// YouTube's player API is there (`player` from the page): commands run
+    /// at once. Before that, they wait in `pending`.
+    player_ready: bool,
     /// The track the app asked for. Anything else that starts playing (the
     /// mobile site's autoplay, say) is paused immediately.
     expected: Option<VideoId>,
     volume: u8,
     /// Apply volume and quality on the next `playing` after a load.
     needs_setup: bool,
-    /// Commands that arrived before the web view existed.
+    /// Commands that arrived before the player could take them.
     pending: Vec<Command>,
 }
 
@@ -132,8 +142,15 @@ define_class!(
     unsafe impl WKScriptMessageHandler for Delegate {
         #[unsafe(method(userContentController:didReceiveScriptMessage:))]
         fn did_receive(&self, _controller: &WKUserContentController, message: &WKScriptMessage) {
+            // Only the page itself speaks for the player: its frames (ads,
+            // say) can reach the handler too. And only short messages.
             // SAFETY: called by WebKit on the main thread with a live message.
-            if let Ok(text) = unsafe { message.body() }.downcast::<NSString>() {
+            let main_frame = unsafe { message.frameInfo().isMainFrame() };
+            // SAFETY: as above.
+            if let Ok(text) = unsafe { message.body() }.downcast::<NSString>()
+                && main_frame
+                && text.length() <= 256
+            {
                 on_page_message(&text.to_string());
             }
         }
@@ -163,6 +180,16 @@ define_class!(
             decision.call((if allowed { WKNavigationActionPolicy::Allow } else { WKNavigationActionPolicy::Cancel },));
         }
 
+        #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
+        fn failed_to_start(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
+            page_failed(error);
+        }
+
+        #[unsafe(method(webView:didFailNavigation:withError:))]
+        fn failed(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
+            page_failed(error);
+        }
+
         #[unsafe(method(webViewWebContentProcessDidTerminate:))]
         fn content_terminated(&self, _web_view: &WKWebView) {
             // Let the app respawn a clean helper rather than limp on.
@@ -171,6 +198,19 @@ define_class!(
         }
     }
 );
+
+/// The player page didn't load (offline, say): this helper can't play, so
+/// it says why and exits; the app starts a fresh one on the next play.
+fn page_failed(error: &NSError) {
+    // Cancelled (by a newer load, or by the navigation policy): not a failure.
+    const CANCELLED: isize = -999;
+    const INTERRUPTED_BY_POLICY: isize = 102;
+    if matches!(error.code(), CANCELLED | INTERRUPTED_BY_POLICY) {
+        return;
+    }
+    emit(&Event::Error(format!("player page failed to load ({} {})", error.domain(), error.code())));
+    std::process::exit(4);
+}
 
 impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
@@ -192,6 +232,7 @@ pub fn run() -> ! {
         window: None,
         delegate,
         page_requested: false,
+        player_ready: false,
         expected: None,
         volume: 100,
         needs_setup: false,
@@ -326,38 +367,64 @@ fn spawn_command_reader() {
 }
 
 fn handle(cmd: Command) {
-    if with(|h| h.web_view.is_none()) {
+    if matches!(cmd, Command::Quit) {
+        std::process::exit(0);
+    }
+    if let Command::Volume(v) = cmd {
+        with(|h| h.volume = v);
+    }
+    // The first load opens the player page; until YouTube's player is on
+    // it, everything else waits (and then runs in order).
+    let (has_view, requested, ready) = with(|h| (h.web_view.is_some(), h.page_requested, h.player_ready));
+    if let Command::Load(id, start) = &cmd
+        && has_view
+        && !requested
+    {
+        with(|h| {
+            h.expected = Some(id.clone());
+            h.needs_setup = true;
+            h.page_requested = true;
+        });
+        return load_page(&format!("https://m.youtube.com/watch?v={id}&t={}s", *start as u64));
+    }
+    if !ready {
         with(|h| h.pending.push(cmd));
         return;
     }
     match cmd {
         Command::Load(id, start) => {
-            let first = with(|h| {
+            with(|h| {
                 h.expected = Some(id.clone());
                 h.needs_setup = true;
-                !std::mem::replace(&mut h.page_requested, true)
             });
-            if first {
-                load_page(&format!("https://m.youtube.com/watch?v={id}&t={}s", start as u64));
-            } else {
-                // Same page, same player: no reload, so switching is fast.
-                js(&format!("__kilo.load('{id}', {start:.2})"));
-            }
+            // Same page, same player: no reload, so switching is fast.
+            js(&format!("__kilo.load('{id}', {start:.2})"));
         }
         Command::Play => js("__kilo.play()"),
         Command::Pause => js("__kilo.pause()"),
         Command::Seek(s) => js(&format!("__kilo.seek({s:.2})")),
-        Command::Volume(v) => {
-            with(|h| h.volume = v);
-            js(&format!("__kilo.volume({v})"));
-        }
-        Command::Quit => std::process::exit(0),
+        Command::Volume(v) => js(&format!("__kilo.volume({v})")),
+        Command::Quit => {}
+    }
+}
+
+/// YouTube's player is on the page: the volume first (before any sound),
+/// then the commands that waited, in order.
+fn player_ready() {
+    if with(|h| std::mem::replace(&mut h.player_ready, true)) {
+        return;
+    }
+    let volume = with(|h| h.volume);
+    js(&format!("__kilo.volume({volume})"));
+    for cmd in with(|h| std::mem::take(&mut h.pending)) {
+        handle(cmd);
     }
 }
 
 fn on_page_message(msg: &str) {
     let (kind, rest) = msg.split_once(' ').unwrap_or((msg, ""));
     match kind {
+        "player" => player_ready(),
         "ad" => {
             js("__kilo.pause()");
             emit(&Event::AdShowing);
@@ -373,6 +440,9 @@ fn on_page_message(msg: &str) {
             let (Some(seconds), Some(duration)) = (time(w.next()), time(w.next())) else { return };
             let video = w.next().and_then(VideoId::parse);
             let expected = with(|h| h.expected.clone());
+            // A report means the player is there, even if `player` was
+            // missed.
+            player_ready();
             let Some(video) = video.filter(|v| Some(v) == expected.as_ref()) else {
                 if kind == "playing" {
                     // Never play anything the app didn't ask for.

@@ -28,8 +28,12 @@ Any other link opens in your browser, where you can see where it goes.
   verifies. Every request, and every redirect, must be https; redirects
   never carry the session along.
 - Thumbnails are downloaded without it.
-- **Sign Out** (in the Kilo menu) deletes everything WebKit stores for Kilo
-  (the session, site data, caches) and every file Kilo writes.
+- **Sign Out** (the account button, or the Kilo menu) deletes everything
+  WebKit stores for Kilo (the session, site data, caches) and every file
+  Kilo writes. If something can't be deleted, Kilo says so and offers to
+  try again. Work still under way at that moment (a page, a thumbnail)
+  writes nothing back, and what one sign-in cached is never shown to
+  another.
 - The app is signed with the hardened runtime, so other programs can't
   inject code into it or attach to it to read its memory.
 
@@ -37,14 +41,17 @@ Any other link opens in your browser, where you can see where it goes.
 - The app itself never runs a web engine. YouTube's player runs in a
   separate helper process, in a web view with Lockdown Mode (no JIT, no
   WebAssembly), images and fonts blocked, and navigation limited to
-  YouTube. New windows are refused.
+  YouTube. New windows are refused. Only the page itself can talk to Kilo,
+  not the frames embedded in it.
 - What the player page reports is checked before Kilo acts on it: video ids
   are validated before they reach a URL or a script, times must be real
   numbers, and the page can't pretend the player stopped.
 - Thumbnails are decoded only if they come from Google's image servers, over
-  https, and are JPEG, PNG or WebP files. Other formats never reach the
-  system's image decoders.
-- No telemetry, no other servers, no update channel, no URL handlers.
+  https (checked again where a redirect leads), and are JPEG, PNG or WebP
+  files. Other formats never reach the system's image decoders.
+- Kilo adds no telemetry of its own (YouTube's player reports playback to
+  YouTube, as on its website), and has no other servers, no update
+  channel, no URL handlers.
 - Dependencies are few and pinned in `Cargo.lock`, and checked against the
   [RustSec advisory database](https://rustsec.org). CI runs with read-only
   permissions and pinned actions.

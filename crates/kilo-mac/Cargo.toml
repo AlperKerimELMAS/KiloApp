@@ -23,6 +23,8 @@ dispatch2.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
     "NSAccessibility",
+    "NSAccessibilityConstants",
+    "NSAccessibilityProtocols",
     "NSAppearance",
     "NSApplication",
     "NSAttributedString",
@@ -96,6 +98,7 @@ objc2-foundation = { workspace = true, features = [
     "NSURL",
     "NSURLRequest",
     "NSUserDefaults",
+    "NSValue",
     "bitflags",
     "block2",
     "objc2-core-foundation",

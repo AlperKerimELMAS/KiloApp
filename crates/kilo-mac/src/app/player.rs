@@ -13,7 +13,7 @@ use kilo_player::protocol::{Command, Event, VideoId};
 use objc2_app_kit::NSWindowOcclusionState;
 use objc2_foundation::{NSString, NSTimer};
 
-use super::{App, queue, show_sign_in, with, with_shell};
+use super::{App, queue, session, with, with_shell};
 use crate::strings::{S, t};
 use crate::ui::shell;
 use crate::{images, net, ui};
@@ -21,6 +21,10 @@ use crate::{images, net, ui};
 /// After this long paused, the player helper (and all of WebKit) is shut
 /// down; pressing play starts a fresh one where playback left off.
 const IDLE_SHUTDOWN: Duration = Duration::from_secs(5 * 60);
+
+/// A track that hasn't started this long after it was asked for won't: the
+/// player is let go of, and the bar says so.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Plays the queue's current track from `start` seconds.
 pub(super) fn play_current(start: f64) {
@@ -48,7 +52,8 @@ pub(super) fn play_current(start: f64) {
                 if with(|a| a.play_token) != Some(token) {
                     return; // the user moved on
                 }
-                if let Some(song) = result.ok().and_then(|q| q.into_iter().next()).filter(|s| !s.is_music_video() && s.video_id().is_some())
+                if let Some(song) =
+                    result.ok().and_then(|q| q.entries.into_iter().next()).filter(|s| !s.is_music_video() && s.video_id().is_some())
                 {
                     with(|a| a.queue.replace_current(song.clone()));
                     show_now_playing(&song);
@@ -61,19 +66,29 @@ pub(super) fn play_current(start: f64) {
     load_current(start);
 }
 
-/// Hands the current track to the player.
+/// Hands the current track to the player, and watches that it starts.
 fn load_current(start: f64) {
-    let Some(Some(entry)) = with(|a| a.queue.current().cloned()) else { return };
+    let Some(Some((entry, token))) = with(|a| a.queue.current().cloned().map(|e| (e, a.play_token))) else { return };
     let Some(id) = entry.video_id().and_then(VideoId::parse) else { return };
     ensure_player();
     with(|a| {
         a.playing = false;
+        a.stalled = false;
+        a.loading = Some(token);
         a.position = start;
         a.duration = 0.0;
         a.position_at = Instant::now();
     });
     send(Command::Load(id, start));
     queue::extend();
+    let when = DispatchTime::NOW.time(LOAD_TIMEOUT.as_nanos() as i64);
+    let _ = DispatchQueue::main().after(when, move || {
+        if with(|a| a.loading == Some(token)).unwrap_or(false) {
+            crate::debug::trace(|| "player: the track didn't start".into());
+            stop_helper();
+            show_status(t(S::PlaybackFailed));
+        }
+    });
 }
 
 fn ensure_player() {
@@ -115,9 +130,9 @@ fn send(cmd: Command) {
 }
 
 /// Asks a helper to quit and kills it if it hasn't within `grace`, off the
-/// main thread.
+/// main thread (and off the workers that load pages).
 fn dispose(player: PlayerProcess, grace: Duration) {
-    net::run(net::Pool::Api, move || player.quit(grace), |()| {});
+    net::spawn(move || player.quit(grace), |()| {});
 }
 
 /// Whether `video` is the queue's current track. Events about any other
@@ -132,6 +147,8 @@ fn halt(a: &mut App) {
     a.position = current_position(a);
     a.position_at = Instant::now();
     a.playing = false;
+    a.stalled = false;
+    a.loading = None;
     if let Some(s) = &a.shell {
         ui::set_symbol(&s.bar.play, "play.fill");
     }
@@ -163,6 +180,8 @@ fn on_player_event(serial: u64, event: Event) {
                     return false;
                 }
                 a.playing = true;
+                a.stalled = false;
+                a.loading = None;
                 a.position = p.seconds;
                 a.duration = p.duration;
                 a.position_at = Instant::now();
@@ -188,6 +207,9 @@ fn on_player_event(serial: u64, event: Event) {
                 a.position = p.seconds;
                 a.duration = p.duration.max(a.duration);
                 a.position_at = Instant::now();
+                a.loading = None;
+                // Waiting for data: the clock stops until it plays again.
+                a.stalled = !paused;
                 if paused {
                     a.playing = false;
                     if let Some(s) = &a.shell {
@@ -225,7 +247,7 @@ fn on_player_event(serial: u64, event: Event) {
         }
         Event::SignedOut => {
             stop_helper();
-            show_sign_in();
+            session::session_ended();
         }
         Event::AdShowing => {
             stop_helper();
@@ -235,15 +257,19 @@ fn on_player_event(serial: u64, event: Event) {
             // Quit, crashed, or shut down (by us when idle, or by macOS 27
             // itself, which quits an idle helper with SIGTERM, "quiet safe
             // quit"). Either way the next play starts a fresh one.
-            let player = with(|a| {
+            let (player, loading) = with(|a| {
+                let loading = a.loading.is_some();
                 halt(a);
-                a.player.take()
+                (a.player.take(), loading)
             })
-            .flatten();
+            .unwrap_or_default();
             sync_timer();
+            if loading {
+                // It went before the track started (its page didn't load).
+                show_status(t(S::PlaybackFailed));
+            }
             if let Some(player) = player {
-                net::run(
-                    net::Pool::Api,
+                net::spawn(
                     move || player.wait(),
                     |status| {
                         crate::debug::trace(|| format!("player: helper ended with {status:?}"));
@@ -350,7 +376,7 @@ pub fn is_muted() -> bool {
 }
 
 fn current_position(a: &App) -> f64 {
-    let pos = if a.playing { a.position + a.position_at.elapsed().as_secs_f64() } else { a.position };
+    let pos = if a.playing && !a.stalled { a.position + a.position_at.elapsed().as_secs_f64() } else { a.position };
     if a.duration > 0.0 { pos.min(a.duration) } else { pos }
 }
 
@@ -387,7 +413,15 @@ fn show_now_playing(entry: &Entry) {
             // Square: a music video's 16:9 picture is cropped to fit.
             let px = ui::square_px(56.0, s.window.backingScaleFactor(), t.wide);
             let art = bar.art.clone();
-            images::load(t.sized(px), px, move |img| ui::set_image(&art, img.as_ref()));
+            let url = t.sized(px);
+            images::load(url.clone(), px, move |img| {
+                // Only if it's still this track's (a slow image for the
+                // previous one mustn't land on the next).
+                let current = with(|a| a.queue.current().and_then(|e| e.thumb.as_ref()).is_some_and(|t| t.sized(px) == url));
+                if current == Some(true) {
+                    ui::set_image(&art, img.as_ref());
+                }
+            });
         }
     });
 }

@@ -6,7 +6,7 @@ session). For depth:
 - `docs/PLAN.md`: design and every measurement.
 - `docs/COMPARISON.md`: the measured comparison with Chrome.
 
-**Last updated:** 2026-10-08 (UI redesign) · **Version:** 0.3 ·
+**Last updated:** 2026-10-08 (whole-project review) · **Version:** 0.3 ·
 **Branch:** `main` (no remote yet)
 
 ---
@@ -282,6 +282,54 @@ Spotifast, a native Rust Spotify client that claims 100–250 MB.
       loaded after playback stops, which is what lets idle Kilo use ~30 MB.
     - Binary 1,158 → 1,175 KB.
 
+12. **Whole-project review (2026-10-08).** An outside review (Astra's, not
+    in the repo) and my own pass; every finding was checked against the
+    code before fixing it.
+    - **Accounts:** signing out, or a session YouTube stops accepting
+      (`session_ended`, new), forgets everything of the account in memory
+      (`session::forget`) and starts a new account epoch: work started
+      before writes nothing back to disk (`paths::write_if_current`) and
+      changes nothing on screen (session checks on the account and photo).
+      Page-cache files are per sign-in (`Session::fingerprint`). Reopening
+      the window shows what `Screen` says, never an older page (it used to
+      reconnect mid-sign-out). Sign-out reports files it couldn't delete
+      and offers Try Again. Google's legacy cookies are pruned whether or
+      not YouTube's session still works. The sign-in window closes when
+      Kilo quits (its stdin is a pipe from Kilo) and a Cancel before it
+      opens holds. The page config lives under the bundle id.
+    - **Playback:** the helper holds commands until YouTube's player is on
+      its page, then runs them in order, volume first (a second track
+      chosen while the page loaded used to be lost, and the first started
+      at the page's own volume). Only the page's main frame is heard. A
+      page that fails to load ends the helper; a track that hasn't started
+      in 30 s is given up with a message. Of two queues still loading, the
+      one asked for last starts. Buffering stops the clock. A slow cover
+      can't land on the next track. Radios and mixes go on with their own
+      continuation (a mix used to turn into a track radio after 49 songs);
+      a playlist's repeats are kept and a click starts at that row.
+    - **Resources:** process work (sign-in, sign-out, helpers quitting) runs
+      on its own threads, not the two page-loading workers. Decoded images
+      are keyed by size too; a purge drops images still loading. Disk
+      caches are trimmed during long sessions, written atomically, and a
+      cached page dated in the future counts as stale. A long list joins
+      the queue as it's reached, not all at once (unless shuffled). A width
+      change re-frames the page instead of rebuilding it (3.9 → 0.1–0.8 ms).
+      Measured afterwards against 0.3 as committed before: album page
+      26.8–27.9 → 27.0–27.9 MB, Home 30.0–30.1 → 28.8–29.0 MB, Home on
+      screen 0.14–0.15 s, unchanged.
+    - **Also:** ⌘R really reloads (it reused a fresh cache). Back returns to
+      where the page was scrolled, and a new look or language keeps it.
+      Video thumbnails in rows are marked 16:9 (sharper). Thumbnails are
+      checked again where redirects lead. VoiceOver can use the sliders,
+      cards and rows (roles, names, adjust and press). `kilo-probe` counts
+      CPU per process (helpers starting or exiting skewed it) and has
+      `--list`; `scripts/` launch and stop only their own Kilo, with
+      deadlines (`lib.sh`); CI and `bundle.sh` build `--locked`; the
+      install swaps in a complete app. Big files were split by job (`ui/`
+      and `app/`, see section 4). Dead code went (`Config::load`, search
+      suggestions).
+    - **Not done, on purpose or for later:** see section 6, item 8.
+
 ## 4. Architecture
 
 ```
@@ -295,9 +343,9 @@ Kilo.app/Contents/MacOS/Kilo  (one binary, five roles)
 
 | Crate | Role |
 |---|---|
-| `kilo-core` (portable) | `http.rs` (ureq on the OS's TLS via native-tls), `auth.rs` (reads WebKit's cookie file, builds the request signature YouTube's web client uses), `client.rs` (API calls: browse, continuation, search, next, `next_single` for a track's song version, page config cached 24 h in `~/Library/Application Support/Kilo/innertube.txt`; "up next" and account requests carry a field mask), `parse/` (serde structs naming only the fields Kilo shows, no JSON tree, under 2 ms per page; the same structs generate the field mask), `model.rs` (Page, Section::{Cards, List, Grid, Text}, Entry, Target, Thumb with exact-size URLs, Account), `image.rs` (which thumbnails may be decoded), `queue.rs`; and what every front end shares: `strings.rs` (English and Turkish), `style.rs` (colors), `shortcuts.rs` (keyboard shortcuts) |
-| `kilo-player` | `protocol.rs`: commands `load <id> <start>`, `play`, `pause`, `seek`, `volume`, `quit`; events `ready`, `playing`/`paused`/`buffering`/`ended <t> <dur> <id>`, `signed-out`, `ad`, `next`, `previous`, `error`. `host.rs`: spawn, send, and emit `Event::Exited` (from the host itself, so the page can't fake it) when it dies. `helper/mac.rs`: the WKWebView setup, the page bridge, ad and unexpected-video guards, media-key routing. `examples/session.rs`: a scripted test session. |
-| `kilo-mac` | `app/` (`mod.rs`: state, launch, the window, which exists only while open; `browse.rs`: navigation, pages and long lists loading as they scroll; `queue.rs`: queues, a queue started from a long list taking the rest as it arrives, the radio; `player.rs`: the helper and its events, the player bar, idle shutdown; `session.rs`: sign-in, sign-out, the account, connecting), `ui/` (`mod.rs` helpers, round buttons, the search pill, cards with the shared hover play button, shelves that pass vertical scrolling to the page, the action target; `page.rs` lazy pages and shelves; `shell.rs` window, sidebar, player bar, account menu and menu bar; `theme.rs` light and dark; `bar.rs` slider), `keys.rs` (shortcuts on macOS), `strings.rs` (picks the language), `settings.rs` (appearance, language, sidebar), `pagecache.rs`, `images.rs` (disk cache, ImageIO decode into IOSurfaces, 16 MB purgeable cache), `net.rs` (two small worker pools with main-thread completions), `login.rs` (the sign-in helper and its output format), `paths.rs`, `debug.rs` (developer switches) |
+| `kilo-core` (portable) | `http.rs` (ureq on the OS's TLS via native-tls), `auth.rs` (reads WebKit's cookie file, builds the request signature YouTube's web client uses), `client.rs` (API calls: browse, continuation, search, next, `next_single` for a track's song version, `next_continuation` for more of a radio or mix, page config; "up next", its continuations and account requests carry a field mask), `parse/` (serde structs naming only the fields Kilo shows, no JSON tree, under 2 ms per page; the same structs generate the field mask), `model.rs` (Page, Section::{Cards, List, Grid, Text}, Entry, Target, Thumb with exact-size URLs, Account), `image.rs` (which thumbnails may be decoded), `queue.rs`; and what every front end shares: `strings.rs` (English and Turkish), `style.rs` (colors), `shortcuts.rs` (keyboard shortcuts) |
+| `kilo-player` | `protocol.rs`: commands `load <id> <start>`, `play`, `pause`, `seek`, `volume`, `quit`; events `ready`, `playing`/`paused`/`buffering`/`ended <t> <dur> <id>`, `signed-out`, `ad`, `next`, `previous`, `error`. `host.rs`: spawn, send, and emit `Event::Exited` (from the host itself, so the page can't fake it) when it dies. `helper/mac.rs`: the WKWebView setup, the page bridge (main frame only; it says `player` once YouTube's player is there, and commands wait for that), ad and unexpected-video guards, failed page loads, media-key routing. `examples/session.rs`: a scripted test session. |
+| `kilo-mac` | `app/` (`mod.rs`: state, launch, the window, which exists only while open; `browse.rs`: navigation, pages and long lists loading as they scroll; `queue.rs`: queues, a queue started from a long list taking the rest as it arrives, the radio; `player.rs`: the helper and its events, the player bar, a load watchdog, idle shutdown; `session.rs`: sign-in, sign-out, a session that ended, the account, connecting; `screens.rs`: the page area's message screens; `sidebar.rs`: its animation; `dev.rs`: developer switches' entry points), `ui/` (`mod.rs` helpers and buttons; `views.rs` root view, focus sink, cards and rows with the shared hover play button, shelves that pass vertical scrolling to the page; `search.rs` the search pill; `actions.rs` the action target; `menus.rs` menu bar and account menu; `page.rs` lazy pages and shelves; `shell.rs` window, sidebar, player bar; `theme.rs` light and dark; `bar.rs` slider), `keys.rs` (shortcuts on macOS), `strings.rs` (picks the language), `settings.rs` (appearance, language, sidebar), `pagecache.rs`, `images.rs` (disk cache, ImageIO decode into IOSurfaces, 16 MB purgeable cache), `net.rs` (two small worker pools with main-thread completions, and a thread each for work that waits on another process), `login.rs` (the sign-in helper and its output format), `paths.rs`, `debug.rs` (developer switches) |
 | `kilo-probe` | Memory and CPU like the OS task managers show, summed over the whole process tree, including the macOS XPC services charged to the app. macOS, Windows and Linux. |
 | `kilo-spike-web`, `kilo-ui-bench` | The measurement labs behind the decisions above |
 
@@ -317,7 +365,7 @@ cargo fmt --all -- --check               # rustfmt.toml: width 140
 cargo clippy --release --workspace --all-targets -- -D warnings
 cargo clippy --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 cargo clippy --release -p kilo-probe -p kilo-player --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
-cargo test --workspace                    # 29 tests
+cargo test --workspace                    # 34 tests
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown [--csv f.csv]
 scripts/startup.sh dist/Kilo.app 4       # when the window, Home and the first image appear
 ```
@@ -332,6 +380,10 @@ crate's `src/generated/` that defines it (`NSView`, `WKWebView`…), or the
 runs and the tests build in 27 s instead of 58 s, into 0.9 GB instead of
 2.1 GB, and the app is the same. `target/` still collects stale builds as
 settings change (it had reached 8 GB): `cargo clean` empties it.
+
+`scripts/measure.sh` and `startup.sh` launch a Kilo of their own and stop
+only that one (`scripts/lib.sh`), so they're safe while the owner's Kilo
+runs; `kilo-probe <pid> --list` names the processes in Kilo's tree.
 
 **Developer switches** (environment variables, see `debug.rs`):
 - `KILO_SNAPSHOT=/path/x` writes the window to `x-N.png`. This terminal has
@@ -375,6 +427,10 @@ launch it with `open -g -n -o log --stderr log --env ... Copy.app`.
   events (and how the helper ended) are logged during a scenario.
 - The harness blocks chained `sleep`s; use `until` loops or background
   tasks.
+- Launch test copies in the background (`open -g`, `KILO_NO_ACTIVATE=1`)
+  unless the test presses keys: an active test window takes whatever the
+  owner is typing (it once started a song). A test copy with the real
+  bundle id shares the owner's preferences (sidebar, appearance, language).
 - Snapshots (`renderInContext`) paint the window's background first: it
   isn't in the layer tree. They do show clipping and rounded corners.
 - `heap` and `malloc_history` can't read a hardened app: re-sign a copy
@@ -447,6 +503,15 @@ the window's size), 27 MB with the window closed, 0% CPU when idle.
    sidebar there).
    - Windows: Win32/Direct2D with a WebView2 helper.
    - Linux: GTK with a WebKitGTK helper.
+8. **From the review, not done yet:** keyboard focus for cards and rows
+   (VoiceOver works; Tab doesn't reach them); media keys after the idle
+   helper is gone (they live in its page: Kilo would need its own Now
+   Playing registration, to be measured); an offline/stale indicator and a
+   retry for a failed continuation other than scrolling; priorities in
+   the worker queues; avoiding the page copy when a long list grows
+   (measured small); parser fixtures for every page type; telling a 403
+   that isn't a signed-out session apart; Premium detection (owner's
+   call). The sign-in window keeps its own Dock icon while it's open.
 
 **Leftovers:**
 - `dist/` is git-ignored.

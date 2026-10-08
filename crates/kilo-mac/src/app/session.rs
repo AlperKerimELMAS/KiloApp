@@ -1,8 +1,14 @@
 //! Signing in and out, who's signed in, and connecting to YouTube Music with
 //! the saved session.
+//!
+//! An account's data has clear boundaries: signing out, or a session YouTube
+//! stops accepting, forgets everything of it in memory (`forget`), and
+//! starts a new account epoch (`paths::new_epoch`), so work that started
+//! before writes nothing back to disk and changes nothing on screen.
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,45 +17,56 @@ use kilo_core::client::{Client, Config};
 use kilo_core::http::Http;
 use kilo_core::parse;
 use kilo_core::queue::Queue;
+use kilo_player::host::PlayerProcess;
 use objc2::sel;
 
 use super::browse::{Route, go};
 use super::{
-    Screen, message, player, rebuild_window, refresh_menu, reload, show_error, show_loading, show_sign_in, show_sign_out_failed,
-    show_signing_out, with,
+    App, Screen, bring_to_front, message, player, rebuild_window, refresh_menu, reload, show_error, show_loading, show_sign_in,
+    show_sign_out_failed, show_signing_out, with,
 };
 use crate::strings::{S, t};
 use crate::{images, login, net, paths, settings, ui};
 
 /// The login helper while it's open (so Cancel can close it).
 static LOGIN: Mutex<Option<Child>> = Mutex::new(None);
+/// Bumped by every sign-in and every cancel: a sign-in whose number is no
+/// longer current closes its window as soon as it opens.
+static LOGIN_ATTEMPT: AtomicU64 = AtomicU64::new(0);
 
 /// At launch: connects with the saved session. If an older Kilo kept
-/// Google's account cookies next to YouTube's, the prune helper deletes
-/// them first.
+/// Google's account cookies next to YouTube's, the prune helper deletes them
+/// first, whether or not YouTube's session still works.
 pub(super) fn resume() {
-    let saved = std::fs::read(paths::cookies()).ok().and_then(|data| parse_binary_cookies(&data));
-    let Some((cookies, session)) = saved.and_then(|c| Session::from_cookies(&c).map(|s| (c, s))) else {
-        show_sign_in();
-        return crate::debug::run_scenario();
-    };
-    if cookies.iter().all(|c| is_youtube_domain(&c.domain)) {
-        return start(session);
-    }
+    let cookies = std::fs::read(paths::cookies()).ok().and_then(|data| parse_binary_cookies(&data)).unwrap_or_default();
+    let session = Session::from_cookies(&cookies);
+    let legacy = cookies.iter().any(|c| !is_youtube_domain(&c.domain));
     let Some(id) = with(|a| a.session) else { return };
-    show_loading();
+    if legacy {
+        show_loading();
+    }
     let exe = std::env::current_exe().ok();
-    net::run(
-        net::Pool::Api,
+    net::spawn(
         move || {
-            let pruned = exe.is_some_and(|exe| Command::new(exe).arg("--prune-helper").status().is_ok_and(|s| s.success()));
-            paths::remove_cookie_copies();
-            pruned
+            let pruned = !legacy || exe.is_some_and(|exe| Command::new(exe).arg("--prune-helper").status().is_ok_and(|s| s.success()));
+            // Old copies of the cookie file may hold them too.
+            paths::remove_cookie_copies() && pruned
         },
         move |pruned| {
-            crate::debug::trace(|| format!("session: Google's account cookies {}", if pruned { "deleted" } else { "NOT deleted" }));
-            if with(|a| a.session) == Some(id) {
-                start(session);
+            if !pruned {
+                // Tried again at the next launch.
+                eprintln!("kilo: couldn't delete all of Google's account cookies");
+            }
+            crate::debug::trace(|| format!("session: legacy cookies {}", if pruned { "gone" } else { "NOT all deleted" }));
+            if with(|a| a.session) != Some(id) {
+                return;
+            }
+            match session {
+                Some(session) => start(session),
+                None => {
+                    show_sign_in();
+                    crate::debug::run_scenario();
+                }
             }
         },
     );
@@ -67,6 +84,7 @@ pub(super) fn saved_session() -> Option<Session> {
 pub(super) fn start(session: Session) {
     let Some(id) = with(|a| a.session) else { return };
     let hl = settings::content_language();
+    let epoch = paths::epoch();
     show_loading();
     net::run(
         net::Pool::Api,
@@ -80,7 +98,7 @@ pub(super) fn start(session: Session) {
                 }
                 None => {
                     let fresh = Config::fetch(&http, Some(&session)).ok()?;
-                    let _ = fresh.save(&path);
+                    save_config(&fresh, epoch);
                     (fresh, false)
                 }
             };
@@ -108,14 +126,23 @@ pub(super) fn start(session: Session) {
     );
 }
 
+/// Saves the page config for the next launch, unless the account it was
+/// read for has been let go of (`paths::epoch`).
+fn save_config(config: &Config, epoch: u64) {
+    if epoch == paths::epoch() {
+        let _ = config.save(&paths::config());
+    }
+}
+
 /// Reads music.youtube.com's page config again, for the next launch.
 fn refresh_config(client: &Client) {
     let client = client.clone();
+    let epoch = paths::epoch();
     net::run(
         net::Pool::Api,
         move || {
             if let Ok(fresh) = Config::fetch(&Http::new(), Some(client.session())) {
-                let _ = fresh.save(&paths::config());
+                save_config(&fresh, epoch);
             }
         },
         |()| {},
@@ -124,12 +151,15 @@ fn refresh_config(client: &Client) {
 
 /// Learns who's signed in (name, handle, photo) for the account button.
 fn fetch_account() {
-    let Some(Some(client)) = with(|a| a.client.clone()) else { return };
+    let Some(Some((client, id))) = with(|a| a.client.clone().map(|c| (c, a.session))) else { return };
     net::run(
         net::Pool::Api,
         move || client.account().and_then(|j| parse::account(&j)),
-        |result| match result {
+        move |result| match result {
             Ok(account) => {
+                if with(|a| a.session) != Some(id) {
+                    return; // signed out meanwhile
+                }
                 with(|a| a.account = Some(account));
                 show_account();
             }
@@ -141,14 +171,17 @@ fn fetch_account() {
 /// Shows the signed-in account's photo on the account button (a 36-point
 /// circle).
 pub(super) fn show_account() {
-    let Some(Some((avatar, button, photo, scale))) = with(|a| {
+    let Some(Some((avatar, button, photo, scale, id))) = with(|a| {
         let s = a.shell.as_ref()?;
-        Some((s.avatar.clone(), s.avatar_button.clone(), a.account.as_ref()?.photo.clone()?, s.window.backingScaleFactor()))
+        Some((s.avatar.clone(), s.avatar_button.clone(), a.account.as_ref()?.photo.clone()?, s.window.backingScaleFactor(), a.session))
     }) else {
         return;
     };
     let px = (36.0 * scale) as u32;
     images::load(photo.sized(px), px, move |image| {
+        if with(|a| a.session) != Some(id) {
+            return;
+        }
         if image.is_some() {
             // The photo replaces the icon; the button stays, clear, on top.
             button.setImage(None);
@@ -183,13 +216,18 @@ pub fn sign_in() {
         return;
     }
     show_signing_in();
+    let attempt = LOGIN_ATTEMPT.fetch_add(1, Ordering::SeqCst) + 1;
     let exe = std::env::current_exe().ok();
-    net::run(
-        net::Pool::Api,
+    net::spawn(
         move || {
-            let mut child = Command::new(exe?).arg("--login-helper").stdout(Stdio::piped()).spawn().ok()?;
+            // Its stdin is a pipe that only Kilo holds: if Kilo goes away,
+            // the helper sees it close and quits too.
+            let mut child = Command::new(exe?).arg("--login-helper").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().ok()?;
             let mut stdout = child.stdout.take()?;
             *LOGIN.lock().ok()? = Some(child);
+            if LOGIN_ATTEMPT.load(Ordering::SeqCst) != attempt {
+                cancel_sign_in(); // cancelled before the window was up
+            }
             // Until the helper exits: signed in, closed, or cancelled.
             let mut out = String::new();
             let _ = stdout.read_to_string(&mut out);
@@ -197,14 +235,17 @@ pub fn sign_in() {
                 let _ = child.wait();
             }
             let cookies = login::parse_output(&out);
-            login::wait_until_saved(&cookies);
+            if !login::wait_until_saved(&cookies) {
+                // The player will say if it isn't signed in.
+                eprintln!("kilo: the sign-in wasn't saved in time");
+            }
             Some(cookies)
         },
-        |cookies| {
+        move |cookies| {
             with(|a| a.account_busy = false);
             // Back from Google's window (signed in, closed or cancelled).
-            super::bring_to_front();
-            match cookies.and_then(|c| Session::from_cookies(&c)) {
+            bring_to_front();
+            match cookies.and_then(|c| Session::from_cookies(&c)).filter(|_| LOGIN_ATTEMPT.load(Ordering::SeqCst) == attempt) {
                 Some(session) => start(session),
                 None => show_sign_in(),
             }
@@ -212,8 +253,10 @@ pub fn sign_in() {
     );
 }
 
-/// Cancel, while signing in: closes the login helper's window.
+/// Cancel, while signing in (and when Kilo quits): closes the login
+/// helper's window, or keeps it from opening.
 pub fn cancel_sign_in() {
+    LOGIN_ATTEMPT.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut login) = LOGIN.lock()
         && let Some(child) = login.as_mut()
     {
@@ -221,35 +264,65 @@ pub fn cancel_sign_in() {
     }
 }
 
+/// Lets go of everything the signed-in account left in memory: its client
+/// and name, pages and history, queue and player. Returns the player, for
+/// the caller to stop off the main thread. Writes still on their way to disk
+/// are dropped (`paths::new_epoch`).
+fn forget(a: &mut App) -> Option<PlayerProcess> {
+    paths::new_epoch();
+    a.session += 1;
+    a.client = None;
+    a.account = None;
+    a.history.clear();
+    a.generation += 1;
+    a.page = None;
+    a.view = None;
+    a.items.clear();
+    a.fetching.clear();
+    a.queue = Queue::default();
+    a.queue_id += 1;
+    a.play_intent += 1;
+    a.play_token += 1;
+    a.follow = None;
+    a.endless = None;
+    a.ran_out = false;
+    a.radio_for = None;
+    a.playing = false;
+    a.stalled = false;
+    a.loading = None;
+    a.position = 0.0;
+    a.duration = 0.0;
+    a.idle_token += 1;
+    a.idle_armed = false;
+    a.player.take()
+}
+
+/// YouTube stopped accepting the session (it expired, or was signed out
+/// elsewhere): the account is forgotten here too, and the sign-in screen
+/// shows. Its cookies stay until a new sign-in replaces them.
+pub(super) fn session_ended() {
+    let Some(player) = with(forget) else { return };
+    if let Some(player) = player {
+        net::spawn(move || player.quit(Duration::from_millis(500)), |()| {});
+    }
+    player::sync_timer();
+    images::purge_memory();
+    refresh_menu();
+    // A fresh window: no account photo, nothing playing.
+    rebuild_window();
+    show_sign_in();
+}
+
 /// Forgets the account on this Mac: stops playback, has a helper delete
 /// everything WebKit stores for Kilo (the session), deletes what Kilo wrote
-/// itself (page config, caches), and shows the sign-in screen.
+/// itself (page config, caches), and shows the sign-in screen. If anything
+/// couldn't be deleted, the screen says so and offers to try again.
 pub fn sign_out() {
     let Some(player) = with(|a| {
         if std::mem::replace(&mut a.account_busy, true) {
             return Err(()); // a sign-in or sign-out is under way
         }
-        a.session += 1;
-        a.client = None;
-        a.account = None;
-        a.history.clear();
-        a.generation += 1;
-        a.page = None;
-        a.view = None;
-        a.items.clear();
-        a.fetching.clear();
-        a.queue = Queue::default();
-        a.queue_id += 1;
-        a.play_token += 1;
-        a.follow = None;
-        a.ran_out = false;
-        a.radio_for = None;
-        a.playing = false;
-        a.position = 0.0;
-        a.duration = 0.0;
-        a.idle_token += 1;
-        a.idle_armed = false;
-        Ok(a.player.take())
+        Ok(forget(a))
     })
     .and_then(Result::ok) else {
         return;
@@ -261,8 +334,7 @@ pub fn sign_out() {
     // A fresh window: no account photo, nothing playing.
     rebuild_window();
     let exe = std::env::current_exe().ok();
-    net::run(
-        net::Pool::Api,
+    net::spawn(
         move || {
             // The helper's WebKit must be gone first, or it could write
             // the session back.
@@ -270,8 +342,7 @@ pub fn sign_out() {
                 player.quit(Duration::from_secs(2));
             }
             let cleared = exe.is_some_and(|exe| Command::new(exe).arg("--sign-out-helper").status().is_ok_and(|s| s.success()));
-            paths::remove_own_data();
-            cleared
+            paths::remove_own_data() && cleared
         },
         |cleared| {
             with(|a| a.account_busy = false);

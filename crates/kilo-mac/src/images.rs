@@ -84,12 +84,16 @@ struct Cached {
     volatile: bool,
 }
 
+/// Decoded images by `key` (a URL and the size it was decoded at), and the
+/// ones being fetched with who's waiting for them.
 #[derive(Default)]
 struct Cache {
     images: HashMap<String, Cached>,
     bytes: usize,
     tick: u64,
     in_flight: HashMap<String, Vec<Waiter>>,
+    /// Bumped by `purge_memory`: images fetched before it aren't kept.
+    generation: u64,
 }
 
 impl Cache {
@@ -141,25 +145,31 @@ fn http() -> &'static Http {
 
 /// Delivers the image at `url` (already sized by `Thumb::sized`), decoded to
 /// at most `px` pixels on its longer side, to `done` on the main thread.
+/// (Some URLs come at one size only, so the decoded size is part of the
+/// key: a small decode isn't handed to a large view.)
 pub fn load(url: String, px: u32, done: impl FnOnce(Option<Image>) + 'static) {
-    if let Some(img) = CACHE.with_borrow_mut(|c| c.get(&url)) {
+    let key = format!("{px} {url}");
+    if let Some(img) = CACHE.with_borrow_mut(|c| c.get(&key)) {
         return done(Some(img));
     }
-    let first = CACHE.with_borrow_mut(|c| {
-        let waiters = c.in_flight.entry(url.clone()).or_default();
+    let Some(generation) = CACHE.with_borrow_mut(|c| {
+        let waiters = c.in_flight.entry(key.clone()).or_default();
         waiters.push(Box::new(done));
-        waiters.len() == 1
-    });
-    if !first {
+        (waiters.len() == 1).then_some(c.generation)
+    }) else {
         return;
-    }
-    let key = url.clone();
+    };
     let letterboxed = url.contains("i.ytimg.com/");
+    let epoch = paths::epoch();
     net::run(
         Pool::Images,
-        move || fetch(&url).and_then(|bytes| decode(&bytes, px, letterboxed)),
+        move || fetch(&url, epoch).and_then(|bytes| decode(&bytes, px, letterboxed)),
         move |img| {
             let waiters = CACHE.with_borrow_mut(|c| {
+                if c.generation != generation {
+                    // Purged meanwhile (the window closed): nobody waits.
+                    return Vec::new();
+                }
                 if let Some(img) = &img {
                     c.insert(key.clone(), img.clone());
                 }
@@ -168,6 +178,8 @@ pub fn load(url: String, px: u32, done: impl FnOnce(Option<Image>) + 'static) {
             for w in waiters {
                 w(img.clone());
             }
+            // If nothing shows it (its view is gone), it becomes purgeable.
+            sweep_soon();
         },
     );
 }
@@ -192,24 +204,27 @@ pub fn sweep_soon() {
     });
 }
 
-/// Drops every cached decoded image (e.g. when the window closes).
+/// Drops every cached decoded image, and forgets images being fetched
+/// (with the views waiting for them): e.g. when the window closes.
 pub fn purge_memory() {
     CACHE.with_borrow_mut(|c| {
         c.images.clear();
         c.bytes = 0;
+        c.in_flight.clear();
+        c.generation += 1;
     });
 }
 
 fn cache_file(url: &str) -> PathBuf {
-    // FNV-1a: a stable, dependency-free file name for a URL.
-    let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
-    paths::image_cache().join(format!("{hash:016x}"))
+    paths::image_cache().join(format!("{:016x}", kilo_core::fnv1a(url.as_bytes())))
 }
 
-/// The image at `url`, from the disk cache or the network. Only images from
+/// The image at `url`, from the disk cache or the network (then saved,
+/// unless the account of `epoch` was let go of meanwhile). Only images from
 /// Google's servers, in a thumbnail format, get past here
-/// (`kilo_core::image`), so ImageIO never decodes anything else.
-fn fetch(url: &str) -> Option<Vec<u8>> {
+/// (`kilo_core::image`), even through redirects, so ImageIO never decodes
+/// anything else.
+fn fetch(url: &str, epoch: u64) -> Option<Vec<u8>> {
     if !image::trusted_url(url) {
         crate::debug::trace(|| format!("images: refused {url}"));
         return None;
@@ -220,15 +235,25 @@ fn fetch(url: &str) -> Option<Vec<u8>> {
     {
         return Some(bytes);
     }
-    let get = |url: &str| http().get(url, &[]).ok().filter(|b| image::known_format(b));
+    let get = |url: &str| http().get_trusted(url, &[], image::trusted_url).ok().filter(|b| image::known_format(b));
     let bytes = get(url).or_else(|| {
         // Not every video has WebP thumbnails; the JPEG always exists.
         get(&format!("{}.jpg", url.strip_suffix(".webp")?.replacen("/vi_webp/", "/vi/", 1)))
     })?;
-    if std::fs::create_dir_all(paths::image_cache()).is_ok() {
-        let _ = std::fs::write(&file, &bytes);
+    if paths::write_if_current(&file, &bytes, epoch) {
+        written(bytes.len() as u64);
     }
     Some(bytes)
+}
+
+/// Counts what's been added to the disk cache, and trims it now and then
+/// (Kilo may stay open for days).
+fn written(bytes: u64) {
+    static SINCE_TRIM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if SINCE_TRIM.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes >= DISK_HIGH - DISK_LOW {
+        SINCE_TRIM.store(0, std::sync::atomic::Ordering::Relaxed);
+        trim_files();
+    }
 }
 
 /// Decodes to at most `px` pixels on the longer side. `letterboxed` images
@@ -337,33 +362,32 @@ pub unsafe fn bitmap_context(
     }
 }
 
-/// Keeps the on-disk cache bounded. Runs once per launch, off the main thread.
+/// Keeps the on-disk cache bounded: at launch, off the main thread (and
+/// again as it grows, `written`).
 pub fn trim_disk_cache() {
-    net::run(
-        Pool::Images,
-        || {
-            let Ok(dir) = std::fs::read_dir(paths::image_cache()) else { return };
-            let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = dir
-                .flatten()
-                .filter_map(|e| {
-                    let meta = e.metadata().ok()?;
-                    Some((meta.modified().ok()?, meta.len(), e.path()))
-                })
-                .collect();
-            let mut total: u64 = files.iter().map(|f| f.1).sum();
-            if total <= DISK_HIGH {
-                return;
-            }
-            files.sort();
-            for (_, len, path) in files {
-                if total <= DISK_LOW {
-                    break;
-                }
-                if std::fs::remove_file(path).is_ok() {
-                    total -= len;
-                }
-            }
-        },
-        |()| {},
-    );
+    net::run(Pool::Images, trim_files, |()| {});
+}
+
+fn trim_files() {
+    let Ok(dir) = std::fs::read_dir(paths::image_cache()) else { return };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = dir
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some((meta.modified().ok()?, meta.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= DISK_HIGH {
+        return;
+    }
+    files.sort();
+    for (_, len, path) in files {
+        if total <= DISK_LOW {
+            break;
+        }
+        if std::fs::remove_file(path).is_ok() {
+            total -= len;
+        }
+    }
 }

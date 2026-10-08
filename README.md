@@ -84,7 +84,7 @@ The app is signed ad hoc, which is enough to run it on the Mac that built it.
 - You sign in on Google's own page, in a system web view. Kilo never sees
   your password, and stores only YouTube's cookies, not your Google account
   session.
-- Kilo talks only to YouTube and Google. There's no telemetry.
+- Kilo talks only to YouTube and Google, and adds no telemetry of its own.
 - **Sign Out** (the account button, top right, or the Kilo menu) deletes
   your session and everything Kilo stored.
 - How Kilo protects your account, its known limitations, and how to report
@@ -92,8 +92,9 @@ The app is signed ad hoc, which is enough to run it on the Mac that built it.
 - On disk: WebKit's cookie store for Kilo (your session,
   `~/Library/HTTPStorages/io.github.alperkerimelmas.kilo.binarycookies`),
   music.youtube.com's page config
-  (`~/Library/Application Support/Kilo/innertube.txt`), and a thumbnail cache
-  capped at 64 MB (`~/Library/Caches/io.github.alperkerimelmas.kilo`).
+  (`~/Library/Application Support/io.github.alperkerimelmas.kilo`), and
+  caches of thumbnails (up to 64 MB) and pages (16 MB), per sign-in
+  (`~/Library/Caches/io.github.alperkerimelmas.kilo`).
 
 ## Layout
 

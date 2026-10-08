@@ -18,6 +18,14 @@ impl Queue {
         Queue { entries, index }
     }
 
+    /// A queue of the playable entries in `entries`, starting at the one at
+    /// `start` (a list's row: a song may be in a playlist twice).
+    pub fn starting_at(entries: &[Entry], start: usize) -> Self {
+        let index = entries.iter().take(start).filter(|e| e.video_id().is_some()).count();
+        let entries: Vec<Entry> = entries.iter().filter(|e| e.video_id().is_some()).cloned().collect();
+        Queue { index: index.min(entries.len().saturating_sub(1)), entries }
+    }
+
     pub fn current(&self) -> Option<&Entry> {
         self.entries.get(self.index)
     }
@@ -58,13 +66,24 @@ impl Queue {
         })
     }
 
+    /// How many tracks come after the current one.
+    pub fn remaining(&self) -> usize {
+        self.entries.len().saturating_sub(self.index + 1)
+    }
+
     /// True when the current track is the last one: time to fetch more
     /// (the track's radio) so playback keeps going like YouTube Music does.
     pub fn needs_more(&self) -> bool {
-        self.index + 1 >= self.entries.len()
+        self.remaining() == 0
     }
 
-    /// Appends entries, skipping ones already queued.
+    /// Appends the next part of a list, as it is (repeats included).
+    pub fn append(&mut self, more: Vec<Entry>) {
+        self.entries.extend(more.into_iter().filter(|e| e.video_id().is_some()));
+    }
+
+    /// Appends more of a radio or mix, skipping tracks already queued (each
+    /// part repeats some).
     pub fn extend(&mut self, more: Vec<Entry>) {
         for e in more {
             if self.is_new(&e) {
@@ -73,18 +92,16 @@ impl Queue {
         }
     }
 
-    /// Adds entries at random places among the tracks still to come (more
-    /// of a shuffled playlist arriving), skipping ones already queued.
-    pub fn extend_shuffled(&mut self, more: Vec<Entry>, rng: &mut Rng) {
-        for e in more {
-            if self.is_new(&e) {
-                // Any slot after the current track, up to the end.
-                let at = match self.entries.len().checked_sub(self.index) {
-                    Some(upcoming @ 1..) => self.index + 1 + rng.below(upcoming),
-                    _ => self.entries.len(),
-                };
-                self.entries.insert(at, e);
-            }
+    /// Adds the next part of a list at random places among the tracks still
+    /// to come (a shuffled playlist arriving).
+    pub fn append_shuffled(&mut self, more: Vec<Entry>, rng: &mut Rng) {
+        for e in more.into_iter().filter(|e| e.video_id().is_some()) {
+            // Any slot after the current track, up to the end.
+            let at = match self.entries.len().checked_sub(self.index) {
+                Some(upcoming @ 1..) => self.index + 1 + rng.below(upcoming),
+                _ => self.entries.len(),
+            };
+            self.entries.insert(at, e);
         }
     }
 
@@ -156,16 +173,31 @@ mod tests {
     fn shuffled_additions_land_after_the_current_track() {
         let mut q = Queue::from_entries(&[song("aaaaaaaaaaa"), song("bbbbbbbbbbb")], "bbbbbbbbbbb");
         let mut rng = Rng::new();
-        q.extend_shuffled(vec![song("ccccccccccc"), song("ddddddddddd"), song("aaaaaaaaaaa")], &mut rng);
+        q.append_shuffled(vec![song("ccccccccccc"), song("ddddddddddd")], &mut rng);
         assert_eq!(q.entries().len(), 4);
         assert_eq!(q.current().and_then(Entry::video_id), Some("bbbbbbbbbbb"));
         assert_eq!(q.entries()[0].video_id(), Some("aaaaaaaaaaa"));
     }
 
     #[test]
+    fn a_playlist_keeps_its_repeats_and_starts_at_the_row_clicked() {
+        let (a, b, c) = (song("aaaaaaaaaaa"), song("bbbbbbbbbbb"), song("ccccccccccc"));
+        let mut not_playable = song("x");
+        not_playable.target = Target::None;
+        // [A, -, B, A]: the second A was clicked (row 3).
+        let mut q = Queue::starting_at(&[a.clone(), not_playable, b.clone(), a.clone()], 3);
+        assert_eq!(q.index(), 2);
+        assert_eq!(q.remaining(), 0);
+        // The next part of the list repeats A and B: both stay.
+        q.append(vec![a, c, b]);
+        let ids: Vec<_> = q.entries().iter().filter_map(Entry::video_id).collect();
+        assert_eq!(ids, ["aaaaaaaaaaa", "bbbbbbbbbbb", "aaaaaaaaaaa", "aaaaaaaaaaa", "ccccccccccc", "bbbbbbbbbbb"]);
+    }
+
+    #[test]
     fn shuffled_additions_to_an_empty_queue_dont_panic() {
         let mut q = Queue::default();
-        q.extend_shuffled(vec![song("aaaaaaaaaaa"), song("bbbbbbbbbbb")], &mut Rng::new());
+        q.append_shuffled(vec![song("aaaaaaaaaaa"), song("bbbbbbbbbbb")], &mut Rng::new());
         assert_eq!(q.entries().len(), 2);
         assert_eq!(q.current().and_then(Entry::video_id), Some("aaaaaaaaaaa"));
     }

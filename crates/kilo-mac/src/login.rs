@@ -112,6 +112,7 @@ fn scheme_and_host(url: &NSURL) -> (String, String) {
 pub fn run() -> ! {
     let mtm = MainThreadMarker::new().expect("main thread");
     strings::init();
+    exit_with_parent();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
@@ -184,6 +185,15 @@ pub fn run() -> ! {
     std::process::exit(1)
 }
 
+/// Kilo holds the other end of our stdin: when it goes away (quits,
+/// crashes), the pipe closes, and the sign-in window must not outlive it.
+fn exit_with_parent() {
+    let _ = std::thread::Builder::new().name("parent".into()).stack_size(64 * 1024).spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        std::process::exit(1);
+    });
+}
+
 fn check_signed_in(web_view: &WKWebView, then: impl Fn(bool) + 'static) {
     let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
         // SAFETY: WebKit passes a valid array for the duration of the call.
@@ -248,8 +258,9 @@ fn report_and_exit(cookies: &[Cookie]) -> ! {
 
 /// Waits, up to 3 s, until WebKit's cookie file holds `cookies` (all but
 /// session cookies, which it never saves), so the player helper starts
-/// signed in. Called by the app once the login helper has exited.
-pub fn wait_until_saved(cookies: &[Cookie]) {
+/// signed in. Called by the app once the login helper has exited. Returns
+/// whether they arrived.
+pub fn wait_until_saved(cookies: &[Cookie]) -> bool {
     for _ in 0..30 {
         let saved = std::fs::read(crate::paths::cookies()).ok().and_then(|data| parse_binary_cookies(&data));
         if saved.is_some_and(|saved| {
@@ -258,10 +269,11 @@ pub fn wait_until_saved(cookies: &[Cookie]) {
                 .filter(|c| c.expires > 0.0)
                 .all(|c| saved.iter().any(|s| (&s.domain, &s.name, &s.value) == (&c.domain, &c.name, &c.value)))
         }) {
-            return;
+            return true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+    false
 }
 
 /// `--prune-helper`: deletes everything WebKit stores for Kilo except

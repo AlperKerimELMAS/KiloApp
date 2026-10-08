@@ -18,26 +18,27 @@
 #   scripts/measure.sh dist/Kilo.app --play lYBUbBu4W08            # playing
 set -eu
 cd "$(dirname "$0")/.."
+. scripts/lib.sh
 APP=${1:?app}; shift
 PROBE=target/release/kilo-probe
 [ -x $PROBE ] || cargo build --release -p kilo-probe
+# SECONDS is optional: what follows may already be --env.
 if [ "${1:-}" = "--play" ]; then
-    VID=$2; SECS=${3:-60}; shift 3 2>/dev/null || shift $#
-    SCEN="wait:1,play:$VID,wait:25"
+    VID=${2:?video id}; shift 2
+    SCEN="wait:1,play:$VID,wait:25"; SECS=60
 else
-    SCEN=$1; SECS=${2:-10}; shift 2 2>/dev/null || shift $#
-    VID=
+    SCEN=${1:?scenario}; shift
+    SECS=10; VID=
 fi
+case "${1:-}" in ''|--*) ;; *) SECS=$1; shift ;; esac
 OUT=$(mktemp -d)
-EXE="$PWD/$APP/Contents/MacOS/Kilo"
-[ -x "$EXE" ] || EXE="$APP/Contents/MacOS/Kilo"
-open -g -n -o $OUT/log --stderr $OUT/log --env KILO_NO_ACTIVATE=1 --env "KILO_SCENARIO=$SCEN" "$@" "$APP"
-P=
-for i in $(seq 1 40); do P=$(pgrep -f "^$EXE\$" | head -1 || true); [ -n "$P" ] && break; sleep 0.25; done
-[ -n "$P" ] || { echo "Kilo didn't start"; exit 1; }
-until grep -q "scenario done" $OUT/log 2>/dev/null; do sleep 0.5; done
+P=$(launch "$APP" $OUT/log --env KILO_NO_ACTIVATE=1 --env "KILO_SCENARIO=$SCEN" "$@")
+trap 'kill $P 2>/dev/null || true' EXIT
+await $OUT/log "scenario done" $P 300
 if [ -n "$VID" ]; then
-    NET=$(pgrep -n -f com.apple.WebKit.Networking)
+    # WebKit's networking process for this Kilo (not another app's).
+    NET=$($PROBE $P --list | awk '/WebKit.Networking/ {print $1; exit}')
+    [ -n "$NET" ] || { echo "no WebKit networking process in Kilo's tree"; exit 1; }
     B0=$(nettop -P -L 1 -n -x -J bytes_in -p $NET | tail -1 | cut -d, -f2)
 fi
 $PROBE $P -d $SECS -i 2 --breakdown > $OUT/probe.txt
@@ -46,7 +47,6 @@ if [ -n "$VID" ]; then
     B1=$(nettop -P -L 1 -n -x -J bytes_in -p $NET | tail -1 | cut -d, -f2)
     echo "network: $(( (B1 - B0) * 60 / SECS / 1024 )) KB/min"
 fi
-kill $P 2>/dev/null || true
 grep -A20 summary $OUT/probe.txt
 sed -n '/Category/,/TOTAL/p' $OUT/footprint.txt | head -12
 echo "(log and raw output in $OUT)"

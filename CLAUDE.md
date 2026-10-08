@@ -31,7 +31,7 @@ architecture, the status and the next steps. Details and measurements are in
 |---|---|
 | `crates/kilo-core` | Portable: HTTP on the OS's TLS, auth from WebKit's cookie file, YouTube Music web API client, lean serde parsers, models, queue; and what every front end shares: words (`strings.rs`), colors (`style.rs`), keyboard shortcuts (`shortcuts.rs`) |
 | `crates/kilo-player` | The player helper (WKWebView on macOS) and its one-line text protocol; `examples/session.rs` is a scripted, measured session |
-| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper`, `--prune-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in; `src/ui/` the views (`theme.rs` light and dark); `keys.rs` the shortcuts; `pagecache.rs` pages on disk |
+| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper`, `--prune-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player, sign-in and out (`session.rs`), message screens, the sidebar animation and developer entry points (`dev.rs`); `src/ui/` the views (`views.rs`, `search.rs`, `menus.rs`, `actions.rs`, `theme.rs` light and dark); `keys.rs` the shortcuts; `pagecache.rs` pages on disk |
 | `crates/kilo-probe` | Measures footprint and CPU like the OS task managers, over the process tree plus the XPC services macOS charges to the app |
 | `crates/kilo-spike-web`, `crates/kilo-ui-bench` | Measurement labs |
 
@@ -121,13 +121,23 @@ shortcuts are tested.
   flashes a second Kilo. So nothing activates Kilo for free: use
   `app::bring_to_front` (`activate()` is only a request since macOS 14 and
   gets turned down). Check with `lsappinfo listen +all`.
-- **A width change only re-frames the page** (`PageView::refresh`): new
-  block contents need autoresizing masks that keep them right when the
-  page is wider or narrower.
 - **Fresh cached pages are shown without parsing a second answer.**
   Swapping in a refetched page right after showing the cached one cost
   2–4 MB of heap fragmentation, so pages under 30 minutes old aren't
   refetched (`pagecache.rs`).
+- **An account's data has boundaries.** Signing out or a session that ended
+  goes through `session::forget`; disk writes from background work use
+  `paths::write_if_current` with the epoch taken when the work started;
+  completions check `a.session`. Page-cache files are per sign-in.
+- **Work that waits on another process uses `net::spawn`** (its own
+  thread), never the two page-loading workers (`net::run`).
+- **The player helper holds commands until the page says `player`.**
+  Anything that drives YouTube's player goes through `handle` so it waits
+  for that.
+- **Width changes re-frame the page** (`PageView::refresh`), they don't
+  rebuild it: a block's contents need autoresizing masks that keep them
+  right at any width, and the block its final size before they're added
+  (growing from zero counts as a resize).
 - **`app::with` silently skips when the state is already borrowed.** Don't
   call AppKit methods that can run the event loop (like `NSWindow.close`)
   inside it.

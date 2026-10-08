@@ -1,6 +1,7 @@
 //! Background work with main-thread completions. Jobs run on a few small
-//! worker threads; their results come back on the main thread, where the
-//! UI lives, via GCD.
+//! worker threads (or, for work that waits on another process, a thread of
+//! their own); their results come back on the main thread, where the UI
+//! lives, via GCD.
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -58,6 +59,23 @@ fn pool(which: Pool) -> &'static Sender<Job> {
 /// Runs `job` on a worker thread, then `done` with its result on the main
 /// thread. Must be called on the main thread.
 pub fn run<T: Send + 'static>(which: Pool, job: impl FnOnce() -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
+    let id = register(done);
+    let _ = pool(which).send(Box::new(move || deliver(id, job())));
+}
+
+/// Like `run`, on a thread of its own: for work that waits on another
+/// process (the sign-in window, a helper quitting), which must neither wait
+/// behind page loads nor hold them up. Rare, so a thread each is fine.
+pub fn spawn<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
+    let id = register(done);
+    let spawned = std::thread::Builder::new().name("kilo-process".into()).stack_size(256 * 1024).spawn(move || deliver(id, job()));
+    if spawned.is_err() {
+        CALLBACKS.with_borrow_mut(|c| c.remove(&id));
+    }
+}
+
+/// Keeps `done` until its result arrives (`deliver`).
+fn register<T: Send + 'static>(done: impl FnOnce(T) + 'static) -> u64 {
     let id = NEXT_ID.with(|n| {
         n.set(n.get() + 1);
         n.get()
@@ -65,14 +83,16 @@ pub fn run<T: Send + 'static>(which: Pool, job: impl FnOnce() -> T + Send + 'sta
     CALLBACKS.with_borrow_mut(|c| {
         c.insert(id, Box::new(move |any| done(*any.downcast::<T>().expect("callback type"))));
     });
-    let _ = pool(which).send(Box::new(move || {
-        let out = job();
-        DispatchQueue::main().exec_async(move || {
-            if let Some(cb) = CALLBACKS.with_borrow_mut(|c| c.remove(&id)) {
-                cb(Box::new(out));
-            }
-        });
-    }));
+    id
+}
+
+/// From a worker: hands `out` to the callback `id` on the main thread.
+fn deliver<T: Send + 'static>(id: u64, out: T) {
+    DispatchQueue::main().exec_async(move || {
+        if let Some(cb) = CALLBACKS.with_borrow_mut(|c| c.remove(&id)) {
+            cb(Box::new(out));
+        }
+    });
 }
 
 /// Runs `f` on the main thread after the current event finishes. Used to

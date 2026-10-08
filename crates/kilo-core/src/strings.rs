@@ -58,7 +58,10 @@ strings! {
     PlayerFailed => "Couldn't start the player", "Oynatıcı başlatılamadı";
     SigningOut => "Signing out…", "Oturum kapatılıyor…";
     SignOutFailed => "Couldn't sign out completely", "Oturum tamamen kapatılamadı";
-    SignOutFailedBody => "Kilo couldn't delete all of its web data. Choose Sign Out again to retry.", "Kilo web verilerinin tamamını silemedi. Yeniden denemek için Oturumu Kapat'ı seçin.";
+    SignOutFailedBody => "Kilo couldn't delete all of its data. Try again to finish signing out.", "Kilo verilerinin tamamını silemedi. Oturumu kapatmayı tamamlamak için tekrar deneyin.";
+    Position => "Position", "Konum";
+    Volume => "Volume", "Ses";
+    PlaybackFailed => "Couldn't play this track. Check your connection.", "Bu parça çalınamadı. Bağlantınızı kontrol edin.";
     SignIn => "Sign In", "Oturum Aç";
     SignOut => "Sign Out", "Oturumu Kapat";
     NotSignedIn => "Not signed in", "Oturum açılmadı";

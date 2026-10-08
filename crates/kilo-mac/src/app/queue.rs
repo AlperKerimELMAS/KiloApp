@@ -1,12 +1,13 @@
 //! What plays next: queues started from a page, a playlist or one track; the
-//! rest of a long list joining as it loads; and, once it all runs out, the
-//! radio of what's playing.
+//! rest of a long list joining as the queue gets to it; and, once it all
+//! runs out, the radio of what's playing. Radios and mixes are endless:
+//! more of the same arrives as the queue runs low, as in YouTube Music.
 
 use std::sync::Arc;
 
 use kilo_core::client::Client;
 use kilo_core::model::{Entry, Header, Page, Section, Target};
-use kilo_core::parse;
+use kilo_core::parse::{self, UpNext};
 use kilo_core::queue::Queue;
 
 use super::browse::fetch_more;
@@ -14,6 +15,10 @@ use super::player::play_current;
 use super::with;
 use crate::net;
 use crate::ui::page::More;
+
+/// When this few tracks are left, more is fetched (the list's next part,
+/// more of the radio): the next track is always there when it's needed.
+const LOW: usize = 3;
 
 /// A queue started from a long list that's still loading: the rest of the
 /// list joins the queue as it arrives.
@@ -32,6 +37,13 @@ impl Follow {
     }
 }
 
+/// More of the radio or mix queue `queue_id` came from.
+pub(super) struct Endless {
+    queue_id: u64,
+    playlist: Box<str>,
+    token: Box<str>,
+}
+
 /// Album tracks come without art or artist; borrow the album's.
 pub(super) fn decorate(mut entries: Vec<Entry>, header: Option<&Header>) -> Vec<Entry> {
     if let Some(h) = header {
@@ -48,21 +60,40 @@ pub(super) fn decorate(mut entries: Vec<Entry>, header: Option<&Header>) -> Vec<
     entries
 }
 
+/// The user asked for something to play that takes a request first: the
+/// client to ask with, and the number of this wish. Only the latest wish
+/// starts (`still_wanted`).
+pub(super) fn new_intent() -> Option<(Arc<Client>, u64)> {
+    with(|a| {
+        a.play_intent += 1;
+        Some((a.client.clone()?, a.play_intent))
+    })
+    .flatten()
+}
+
+/// Whether wish `intent` is still the latest (nothing was started since).
+pub(super) fn still_wanted(intent: u64) -> bool {
+    with(|a| a.play_intent == intent).unwrap_or(false)
+}
+
 /// Starts playing `queue`. With `follow`, the rest of the list it came from
-/// is fetched and added as it arrives.
+/// joins as the queue gets to it.
 pub(super) fn start(queue: Queue, follow: Option<Follow>) {
-    let next = with(|a| {
+    start_endless(queue, follow, None);
+}
+
+/// `start`, for a queue that's the beginning of a radio or mix
+/// (`playlist`) whose more comes with `token`.
+fn start_endless(queue: Queue, follow: Option<Follow>, endless: Option<(Box<str>, Box<str>)>) {
+    with(|a| {
+        a.play_intent += 1;
         a.queue = queue;
         a.queue_id += 1;
         a.radio_for = None;
         a.follow = follow.map(|f| Follow { queue_id: a.queue_id, ..f });
-        a.follow.as_ref().map(|f| f.next.clone())
-    })
-    .flatten();
+        a.endless = endless.map(|(playlist, token)| Endless { queue_id: a.queue_id, playlist, token });
+    });
     play_current(0.0);
-    if let Some(next) = next {
-        fetch_more(More::List, next);
-    }
 }
 
 /// "Play" / "Shuffle" on a page header.
@@ -73,8 +104,8 @@ pub fn play_all(shuffle: bool) {
 }
 
 /// Plays the first list of `page` (an album's or playlist's tracks). A long
-/// list starts right away with what's loaded; the rest joins the queue as
-/// it arrives.
+/// list starts right away with what's loaded; the rest joins as the queue
+/// gets to it (all of it at once when shuffled, to shuffle it all).
 pub(super) fn play_page(page: &Page, shuffle: bool) {
     let Some(list) = page.sections.iter().find(|s| matches!(s, Section::List { .. })) else { return };
     let rest = match list {
@@ -86,25 +117,28 @@ pub(super) fn play_page(page: &Page, shuffle: bool) {
     if shuffle {
         with(|a| a.rng.shuffle(&mut entries));
     }
-    let Some(first) = entries.first().and_then(|e| e.video_id().map(str::to_owned)) else { return };
+    if entries.is_empty() {
+        return;
+    }
     let follow = rest.map(|next| Follow::new(next, shuffle, header.clone()));
-    start(Queue::from_entries(&decorate(entries, header.as_ref()), &first), follow);
+    start(Queue::starting_at(&decorate(entries, header.as_ref()), 0), follow);
 }
 
 /// Plays a whole playlist or mix from its start.
 pub(super) fn play_playlist(playlist_id: String) {
-    let Some(Some((client, queue_id))) = with(|a| a.client.clone().map(|c| (c, a.queue_id))) else { return };
+    let Some((client, intent)) = new_intent() else { return };
     net::run(
         net::Pool::Api,
-        move || client.next_playlist(&playlist_id).and_then(|j| parse::up_next(&j)),
+        move || client.next_playlist(&playlist_id).and_then(|j| parse::up_next(&j)).map(|q| (q, playlist_id)),
         move |result| {
-            if with(|a| a.queue_id) != Some(queue_id) {
-                return; // something else started playing meanwhile
+            if !still_wanted(intent) {
+                return; // something else was started meanwhile
             }
-            if let Ok(entries) = result
-                && let Some(first) = entries.first().and_then(|e| e.video_id().map(str::to_owned))
+            if let Ok((up, playlist)) = result
+                && !up.entries.is_empty()
             {
-                start(Queue::from_entries(&entries, &first), None);
+                let endless = up.continuation.map(|token| (playlist.into(), token));
+                start_endless(Queue::starting_at(&up.entries, 0), None, endless);
             }
         },
     );
@@ -113,16 +147,17 @@ pub(super) fn play_playlist(playlist_id: String) {
 /// Plays a song by id, queued with its radio (as YouTube Music does when a
 /// single song is started).
 pub fn play_video(video_id: String) {
-    let Some(Some((client, queue_id))) = with(|a| a.client.clone().map(|c| (c, a.queue_id))) else { return };
+    let Some((client, intent)) = new_intent() else { return };
     net::run(
         net::Pool::Api,
-        move || client.next(&video_id, None).and_then(|j| parse::up_next(&j)).map(|e| (e, video_id)),
+        move || client.next(&video_id, None).and_then(|j| parse::up_next(&j)).map(|q| (q, video_id)),
         move |result| {
-            if with(|a| a.queue_id) != Some(queue_id) {
-                return; // something else started playing meanwhile
+            if !still_wanted(intent) {
+                return; // something else was started meanwhile
             }
-            if let Ok((entries, id)) = result {
-                start(Queue::from_entries(&entries, &id), None);
+            if let Ok((up, id)) = result {
+                let endless = up.continuation.map(|token| (Client::radio_id(&id).into(), token));
+                start_endless(Queue::from_entries(&up.entries, &id), None, endless);
             }
         },
     );
@@ -142,7 +177,8 @@ pub fn play_music_video(video_id: &str) {
 }
 
 /// Hands the part of a list that `token` pointed to to the queue that's
-/// following that list, and asks for the part after it.
+/// following that list (repeats and all), and asks for the part after it
+/// if the queue will soon need it.
 pub(super) fn feed(token: &str, entries: Vec<Entry>, next: Option<Box<str>>) {
     let fetch_next = with(|a| {
         let mut follow = a.follow.take()?;
@@ -152,15 +188,16 @@ pub(super) fn feed(token: &str, entries: Vec<Entry>, next: Option<Box<str>>) {
         }
         let entries = decorate(entries, follow.header.as_ref());
         if follow.shuffle {
-            a.queue.extend_shuffled(entries, &mut a.rng);
+            a.queue.append_shuffled(entries, &mut a.rng);
         } else {
-            a.queue.extend(entries);
+            a.queue.append(entries);
         }
         // Without a next part the list is complete, and the follow ends.
         let next = next?;
         follow.next = next.clone();
+        let soon = follow.shuffle || a.queue.remaining() <= LOW;
         a.follow = Some(follow);
-        Some(next)
+        soon.then_some(next)
     })
     .flatten();
     if let Some(next) = fetch_next {
@@ -178,55 +215,85 @@ fn carry_on() {
     }
 }
 
-/// When the current track is the last one, makes sure more is on its way:
-/// the next part of the list the queue follows or, once that's complete,
-/// the radio of what's playing, like YouTube Music.
+/// When few tracks are left, makes sure more is on its way: the next part of
+/// the list the queue follows, more of its radio or mix or, once all that's
+/// done, the radio of what's playing, like YouTube Music.
 pub(super) fn extend() {
+    /// What to ask YouTube for.
+    #[derive(Clone)]
+    enum Ask {
+        /// More of the radio or mix `playlist`, with its token.
+        More { playlist: Box<str>, token: Box<str> },
+        /// The radio of this track.
+        Radio(String),
+    }
     enum Wanted {
         /// The list's next part, by its continuation token.
         ListPart(Box<str>),
-        /// The radio of this track, for queue `u64`.
-        Radio(Arc<Client>, String, u64),
+        Ask(Arc<Client>, Ask, u64),
     }
     let wanted = with(|a| {
-        if !a.queue.needs_more() {
+        if a.queue.remaining() > LOW {
             return None;
         }
         if let Some(f) = &a.follow {
-            // Normally already on its way; asked again if fetching it failed.
+            // Fetched once (`fetch_more` won't ask twice at a time); asked
+            // again if fetching it failed.
             return Some(Wanted::ListPart(f.next.clone()));
         }
+        let client = a.client.clone()?;
+        // Taken while it's fetched, so it's asked for once.
+        if let Some(e) = a.endless.take_if(|e| e.queue_id == a.queue_id) {
+            return Some(Wanted::Ask(client, Ask::More { playlist: e.playlist, token: e.token }, a.queue_id));
+        }
+        // A track's radio, once the queue is down to its last track.
         let current = a.queue.current()?.video_id()?.to_owned();
-        if a.radio_for.as_deref() == Some(&*current) {
+        if !a.queue.needs_more() || a.radio_for.as_deref() == Some(&*current) {
             return None;
         }
-        let client = a.client.clone()?;
         a.radio_for = Some(current.as_str().into());
-        Some(Wanted::Radio(client, current, a.queue_id))
+        Some(Wanted::Ask(client, Ask::Radio(current), a.queue_id))
     })
     .flatten();
-    match wanted {
-        Some(Wanted::ListPart(next)) => fetch_more(More::List, next),
-        Some(Wanted::Radio(client, id, queue_id)) => net::run(
-            net::Pool::Api,
-            move || client.next(&id, None).and_then(|j| parse::up_next(&j)).map_err(|_| id),
-            move |result| match result {
-                Ok(entries) => {
-                    if with(|a| a.queue_id == queue_id).unwrap_or(false) {
-                        with(|a| a.queue.extend(entries));
-                        carry_on();
-                    }
-                }
-                // Let a later track change or end ask again.
-                Err(id) => {
+    let (client, ask, queue_id) = match wanted {
+        Some(Wanted::ListPart(next)) => return fetch_more(More::List, next),
+        Some(Wanted::Ask(client, ask, queue_id)) => (client, ask, queue_id),
+        None => return,
+    };
+    let job = ask.clone();
+    net::run(
+        net::Pool::Api,
+        move || {
+            match &job {
+                Ask::More { playlist, token } => client.next_continuation(playlist, token),
+                Ask::Radio(id) => client.next(id, None),
+            }
+            .and_then(|j| parse::up_next(&j))
+        },
+        move |result: kilo_core::Result<UpNext>| {
+            if !with(|a| a.queue_id == queue_id).unwrap_or(false) {
+                return; // another queue started meanwhile
+            }
+            match (result, ask) {
+                (Ok(up), ask) => {
+                    let playlist = match ask {
+                        Ask::More { playlist, .. } => playlist,
+                        Ask::Radio(id) => Client::radio_id(&id).into(),
+                    };
                     with(|a| {
-                        if a.radio_for.as_deref() == Some(&*id) {
-                            a.radio_for = None;
-                        }
+                        a.queue.extend(up.entries);
+                        a.endless = up.continuation.map(|token| Endless { queue_id, playlist, token });
                     });
+                    carry_on();
                 }
-            },
-        ),
-        None => {}
-    }
+                // Asked again later (the next track change, or end).
+                (Err(_), Ask::More { playlist, token }) => {
+                    with(|a| a.endless = Some(Endless { queue_id, playlist, token }));
+                }
+                (Err(_), Ask::Radio(_)) => {
+                    with(|a| a.radio_for = None);
+                }
+            }
+        },
+    );
 }

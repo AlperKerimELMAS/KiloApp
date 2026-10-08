@@ -1,13 +1,14 @@
 //! A minimal slider: a track layer and a fill layer. AppKit's `NSSlider`
 //! (Liquid Glass) starts Apple's Metal shader compiler service — 40 MB — and
-//! adds ~5 MB to the app; this costs two layers.
+//! adds ~5 MB to the app; this costs two layers. To VoiceOver it's a slider
+//! like any other: named, with its value, and adjustable.
 
 use std::cell::Cell;
 
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSEvent, NSView};
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_app_kit::{NSAccessibility, NSAccessibilitySliderRole, NSEvent, NSView};
+use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
 use objc2_quartz_core::{CALayer, CATransaction};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,20 @@ define_class!(
                 }
             }
         }
+
+        // VoiceOver's "increment" and "decrement": the steps the keyboard
+        // shortcuts take.
+        #[unsafe(method(accessibilityPerformIncrement))]
+        fn increment(&self) -> bool {
+            self.step(true);
+            true
+        }
+
+        #[unsafe(method(accessibilityPerformDecrement))]
+        fn decrement(&self) -> bool {
+            self.step(false);
+            true
+        }
     }
 );
 
@@ -107,7 +122,24 @@ impl Bar {
         root.addSublayer(&fill_layer);
         view.setLayer(Some(&root));
         view.setWantsLayer(true);
+        view.setAccessibilityElement(true);
+        // SAFETY: the role is a constant string.
+        view.setAccessibilityRole(Some(unsafe { NSAccessibilitySliderRole }));
         view
+    }
+
+    /// What VoiceOver calls it.
+    pub fn set_label(&self, label: &str) {
+        self.setAccessibilityLabel(Some(&NSString::from_str(label)));
+    }
+
+    /// A step up or down, as the keyboard shortcuts take one.
+    fn step(&self, up: bool) {
+        let sign = if up { 1 } else { -1 };
+        match self.ivars().kind {
+            Kind::Volume => crate::net::later(move || crate::app::change_volume(sign * i16::from(kilo_core::shortcuts::VOLUME_STEP))),
+            Kind::Progress => crate::net::later(move || crate::app::seek_by(f64::from(sign) * kilo_core::shortcuts::SEEK_STEP)),
+        }
     }
 
     /// Sets the value (0–1) unless the user is dragging it.
@@ -116,6 +148,7 @@ impl Bar {
             // Never NaN: Core Animation throws on a NaN frame.
             self.ivars().value.set(if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
             self.relayout();
+            self.value_changed();
         }
     }
 
@@ -129,10 +162,18 @@ impl Bar {
         let v = (p.x / w).clamp(0.0, 1.0);
         self.ivars().value.set(v);
         self.relayout();
+        self.value_changed();
         if self.ivars().kind == Kind::Volume {
             let volume = (v * 100.0).round() as u8;
             crate::net::later(move || crate::app::set_volume(volume));
         }
+    }
+
+    /// The value VoiceOver reads, in percent.
+    fn value_changed(&self) {
+        let percent = NSNumber::new_f64((self.ivars().value.get() * 100.0).round());
+        // SAFETY: an NSNumber is a valid accessibility value.
+        unsafe { self.setAccessibilityValue(Some(&percent)) };
     }
 
     fn relayout(&self) {

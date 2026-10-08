@@ -11,12 +11,18 @@
 //! - `browse`: pages, navigation, and loading more of a page as it scrolls.
 //! - `queue`: what plays next, and where it comes from.
 //! - `player`: the player helper, the player bar, and the idle shutdown.
-//! - `session`: signing in, and connecting with the saved session.
+//! - `session`: signing in and out, and connecting with the saved session.
+//! - `screens`: the page area's message screens (loading, sign-in, errors).
+//! - `sidebar`: collapsing and expanding the sidebar.
+//! - `dev`: developer switches' entry points (`debug` runs them).
 
 mod browse;
+mod dev;
 mod player;
 mod queue;
+mod screens;
 mod session;
+mod sidebar;
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -26,30 +32,32 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use kilo_core::client::Client;
-use kilo_core::model::{Account, Entry, Page, Section};
+use kilo_core::model::{Account, Page};
 use kilo_core::queue::{Queue, Rng};
 use kilo_player::host::PlayerProcess;
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject, Sel};
-use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions, NSImageView, NSTextAlignment, NSView,
-    NSViewBoundsDidChangeNotification, NSWindow, NSWindowDelegate, NSWindowDidChangeOcclusionStateNotification,
-    NSWindowDidResizeNotification, NSWorkspace,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSViewBoundsDidChangeNotification, NSWindow, NSWindowDelegate,
+    NSWindowDidChangeOcclusionStateNotification, NSWindowDidResizeNotification,
 };
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSRunLoop, NSRunLoopCommonModes, NSTimer};
-use objc2_quartz_core::CADisplayLink;
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSTimer};
 
 pub use browse::{Route, activate, back, go, play_item, reload, scroll_by, scroll_to};
+pub use dev::{bench_relayout, choose, describe, describe_keys, scroll_shelf, snapshot};
 pub use player::{change_volume, is_muted, next, play_pause, previous, seek, seek_by, set_volume, toggle_mute};
 pub use queue::{play_all, play_music_video, play_video};
+use screens::{message, set_content, show_empty, show_error, show_loading, show_sign_in, show_sign_out_failed, show_signing_out};
 pub use session::{cancel_sign_in, sign_in, sign_out};
+pub use sidebar::{sidebar_frame, toggle_sidebar};
 
 use crate::settings::{self, Appearance, Language};
-use crate::strings::{self, S, t};
+use crate::strings;
+use crate::ui::menus;
 use crate::ui::page::{Items, PageView};
 use crate::ui::shell::{self, Shell};
-use crate::ui::{self, Weight, theme};
+use crate::ui::{self, theme};
 use crate::{images, net};
 
 /// What the page area shows, so a rebuilt window can show it again.
@@ -72,7 +80,8 @@ struct App {
     client: Option<Arc<Client>>,
     /// Who's signed in (fetched once connected).
     account: Option<Account>,
-    history: Vec<Route>,
+    /// Pages visited, with where each was scrolled to when left.
+    history: Vec<browse::Visit>,
     /// Bumped on every page load, so a late answer for an old page is
     /// ignored.
     generation: u64,
@@ -87,10 +96,15 @@ struct App {
     /// Bumped for every new queue, so a late answer for an old one is
     /// ignored.
     queue_id: u64,
+    /// Bumped whenever the user starts something playing: of two queues
+    /// still loading, only the one asked for last starts.
+    play_intent: u64,
     /// Bumped on every track change, so a late answer for an old track is
     /// ignored.
     play_token: u64,
     follow: Option<queue::Follow>,
+    /// More of the radio or mix the queue came from, once it runs low.
+    endless: Option<queue::Endless>,
     /// The last track ended with nothing after it yet: when more arrives
     /// (the rest of a list, or the radio), playback carries on.
     ran_out: bool,
@@ -102,6 +116,11 @@ struct App {
     /// replaced are ignored.
     player_serial: u64,
     playing: bool,
+    /// Playing, but waiting for data: the position stands still.
+    stalled: bool,
+    /// The track (`play_token`) the player was asked to load and hasn't
+    /// started yet.
+    loading: Option<u64>,
     position: f64,
     duration: f64,
     position_at: Instant,
@@ -175,6 +194,7 @@ define_class!(
 
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _n: &NSNotification) {
+            session::cancel_sign_in();
             if let Some(Some(player)) = with(|a| a.player.take()) {
                 player.quit(Duration::from_millis(500));
             }
@@ -210,7 +230,7 @@ fn launch() {
     let mtm = mtm();
     theme::apply(settings::appearance(), mtm);
     strings::init();
-    shell::install_menu(false, mtm);
+    menus::install_menu(false, mtm);
 
     // Scrolling or resizing reveals thumbnails and may need more of the
     // page (coalesced); the window being covered or uncovered starts or
@@ -244,14 +264,18 @@ fn launch() {
         fetching: Vec::new(),
         queue: Queue::default(),
         queue_id: 0,
+        play_intent: 0,
         play_token: 0,
         follow: None,
+        endless: None,
         ran_out: false,
         radio_for: None,
         rng: Rng::new(),
         player: None,
         player_serial: 0,
         playing: false,
+        stalled: false,
+        loading: None,
         position: 0.0,
         duration: 0.0,
         position_at: Instant::now(),
@@ -298,7 +322,7 @@ fn open_window(window: Option<Retained<NSWindow>>) {
     shell.window.makeFirstResponder(Some(&shell.focus_sink));
     with(|a| {
         shell.back.setEnabled(a.history.len() > 1);
-        shell::select_nav(&shell, a.history.last().and_then(Route::nav_index));
+        shell::select_nav(&shell, a.history.last().and_then(|v| v.route.nav_index()));
         a.shell = Some(shell);
     });
     player::restore_bar();
@@ -308,19 +332,26 @@ fn open_window(window: Option<Retained<NSWindow>>) {
 }
 
 /// Builds the window's views again, in the same window and showing the same
-/// thing: for a new look or language.
+/// thing, scrolled as it was: for a new look or language.
 fn rebuild_window() {
-    let Some(Some((window, screen))) = with(|a| {
-        a.view = None;
-        a.shell.take().map(|s| (s.window.clone(), a.screen.clone()))
+    let Some(Some((window, scrolled))) = with(|a| {
+        let scrolled = a.view.take().map_or(0.0, |v| v.scrolled());
+        a.shell.take().map(|s| (s.window.clone(), scrolled))
     }) else {
         return;
     };
     ui::reset_hover_play();
     open_window(Some(window));
-    let page = with(|a| a.page.clone()).flatten();
+    restore_screen(scrolled);
+}
+
+/// Shows what the page area showed when the window's views went away
+/// (`Screen` is the truth: an old page stays hidden behind a newer error
+/// or sign-out).
+fn restore_screen(scrolled: f64) {
+    let Some((screen, page)) = with(|a| (a.screen.clone(), a.page.clone())) else { return };
     match (screen, page) {
-        (Screen::Page, Some(page)) => browse::show_page(page),
+        (Screen::Page, Some(page)) => browse::show_page_at(page, scrolled),
         (Screen::Loading | Screen::Page, _) => show_loading(),
         (Screen::SignIn, _) => show_sign_in(),
         (Screen::SigningIn, _) => session::show_signing_in(),
@@ -363,7 +394,7 @@ pub fn set_language(tag: isize) {
 /// Rebuilds the menu bar (its words, ticks, and Sign In or Out).
 fn refresh_menu() {
     let signed_in = with(|a| a.client.is_some()).unwrap_or(false);
-    shell::install_menu(signed_in, mtm());
+    menus::install_menu(signed_in, mtm());
 }
 
 /// The account button: a menu with who's signed in, the settings, and
@@ -376,7 +407,7 @@ pub fn show_account_menu() {
         return;
     };
     let names = account.as_ref().map(|a| (&*a.name, &*a.handle));
-    let menu = shell::account_menu(signed_in, names, mtm());
+    let menu = menus::account_menu(signed_in, names, mtm());
     // Just below the button.
     menu.popUpMenuPositioningItem_atLocation_inView(None, NSPoint::new(0.0, -6.0), Some(&view));
 }
@@ -391,25 +422,6 @@ pub fn close_window() {
 
 pub fn reopen_window() {
     show_window();
-}
-
-/// Developer switch: renders the window to `KILO_SNAPSHOT`, soon or `now`.
-pub fn snapshot(now: bool) {
-    with_shell(|s| if now { crate::debug::snapshot_now(&s.window) } else { crate::debug::schedule_snapshot(&s.window) });
-}
-
-/// Developer switch: picks the appearance or language as their menus do.
-pub fn choose(setting: &str, value: &str) {
-    let tag = match value {
-        "light" | "en" => 1,
-        "dark" | "tr" => 2,
-        _ => 0,
-    };
-    match setting {
-        "theme" => set_appearance(tag),
-        "lang" => set_language(tag),
-        _ => {}
-    }
 }
 
 fn window_closed() {
@@ -435,98 +447,7 @@ fn show_window() {
         return;
     }
     open_window(None);
-    match with(|a| a.page.clone()).flatten() {
-        Some(page) => browse::show_page(page),
-        None => reload(),
-    }
-}
-
-/// How long the sidebar takes to collapse or expand.
-const SIDEBAR_ANIMATION: Duration = Duration::from_millis(220);
-
-/// The sidebar collapsing or expanding, frame by frame.
-struct SidebarAnimation {
-    link: Retained<CADisplayLink>,
-    from: f64,
-    to: f64,
-    start: Instant,
-    /// For the scenario log: frames shown, and the slowest one's work.
-    frames: u32,
-    slowest: Duration,
-}
-
-thread_local! {
-    static SIDEBAR: RefCell<Option<SidebarAnimation>> = const { RefCell::new(None) };
-}
-
-/// The ☰ button: collapses the sidebar to its icons, or expands it (and
-/// remembers which). It slides, briefly, unless the Mac is set to reduce
-/// motion; toggling again midway turns it around.
-pub fn toggle_sidebar() {
-    let collapsed = !settings::sidebar_collapsed();
-    settings::set_sidebar_collapsed(collapsed);
-    let to = if collapsed { 1.0 } else { 0.0 };
-    let reduce = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
-    let Some((from, view)) = with_shell(|s| (shell::sidebar_progress(s), s.window.contentView())) else { return };
-    let running = SIDEBAR.with_borrow_mut(|a| {
-        a.as_mut().map(|a| {
-            (a.from, a.to, a.start, a.frames) = (from, to, Instant::now(), 0);
-        })
-    });
-    if running.is_some() {
-        return;
-    }
-    let Some(view) = view.filter(|_| !reduce) else {
-        with_shell(|s| {
-            shell::set_collapsed(s, collapsed);
-            s.window.layoutIfNeeded();
-        });
-        return browse::schedule_refresh();
-    };
-    let target: &objc2::runtime::AnyObject = ui::actions(mtm());
-    // SAFETY: the target (the app-wide action object) has `sidebarFrame:`.
-    let link = unsafe { view.displayLinkWithTarget_selector(target, sel!(sidebarFrame:)) };
-    // SAFETY: the main run loop, in its common modes (so it runs during
-    // tracking too).
-    unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
-    SIDEBAR.set(Some(SidebarAnimation { link, from, to, start: Instant::now(), frames: 0, slowest: Duration::ZERO }));
-}
-
-/// One frame of the sidebar animation (from its display link): the
-/// sidebar's width eases out, and the page follows (only re-framed, so a
-/// frame costs well under a millisecond).
-pub fn sidebar_frame() {
-    let Some((from, to, start)) = SIDEBAR.with_borrow(|a| a.as_ref().map(|a| (a.from, a.to, a.start))) else { return };
-    let work = Instant::now();
-    let t = (start.elapsed().as_secs_f64() / SIDEBAR_ANIMATION.as_secs_f64()).min(1.0);
-    let eased = 1.0 - (1.0 - t).powi(3);
-    let open = with_shell(|s| {
-        if t < 1.0 {
-            shell::set_sidebar_progress(s, from + (to - from) * eased);
-        } else {
-            shell::set_collapsed(s, to == 1.0);
-        }
-        s.window.layoutIfNeeded();
-    })
-    .is_some();
-    with(|a| {
-        if let Some(v) = &a.view {
-            v.refresh();
-        }
-    });
-    let done = SIDEBAR.with_borrow_mut(|a| {
-        let a = a.as_mut()?;
-        a.frames += 1;
-        a.slowest = a.slowest.max(work.elapsed());
-        (t >= 1.0 || !open).then_some((a.frames, a.slowest))
-    });
-    if let Some((frames, slowest)) = done {
-        if let Some(a) = SIDEBAR.take() {
-            a.link.invalidate();
-        }
-        crate::debug::trace(|| format!("sidebar: {frames} frames, slowest {:.2} ms", slowest.as_secs_f64() * 1000.0));
-        browse::schedule_refresh();
-    }
+    restore_screen(0.0);
 }
 
 /// Moves keyboard focus off the search field once a search has been sent.
@@ -536,187 +457,4 @@ pub fn release_search_focus() {
 
 pub fn focus_search() {
     with_shell(|s| s.window.makeFirstResponder(Some(&s.search)));
-}
-
-/// Fills the page area with `view`, sized by autoresizing rather than
-/// constraints so the page stays out of Auto Layout.
-fn set_content(view: &NSView) {
-    with_shell(|s| {
-        for old in s.content.subviews().iter() {
-            old.removeFromSuperview();
-        }
-        view.setFrame(s.content.bounds());
-        view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
-        s.content.addSubview(view);
-    });
-}
-
-/// The page area while a page loads: its shape in placeholder gray.
-fn show_loading() {
-    with(|a| {
-        a.view = None;
-        a.screen = Screen::Loading;
-    });
-    if with(|a| a.shell.is_some()).unwrap_or(false) {
-        set_content(&ui::page::skeleton(mtm()));
-    }
-}
-
-/// A button on a message screen: its title, action, and whether it's the
-/// filled call to action.
-type Button<'a> = (&'a str, Sel, bool);
-
-/// Fills the page area with a centered message: the app's icon (`icon`),
-/// a title, text, buttons and a small note under them.
-fn message(screen: Screen, icon: bool, title: &str, body: &str, buttons: &[Button], note: &str) {
-    let mtm = mtm();
-    with(|a| {
-        a.view = None;
-        a.screen = screen;
-    });
-    if with(|a| a.shell.is_none()).unwrap_or(true) {
-        return;
-    }
-    let mut views: Vec<Retained<NSView>> = Vec::new();
-    if icon && let Some(image) = NSApplication::sharedApplication(mtm).applicationIconImage() {
-        let image = NSImageView::imageViewWithImage(&image, mtm);
-        ui::size(&image, Some(96.0), Some(96.0));
-        views.push(Retained::into_super(Retained::into_super(image)));
-    }
-    views.push(Retained::into_super(Retained::into_super(ui::label(title, 28.0, Weight::Bold, false, mtm))));
-    if !body.is_empty() {
-        let b = ui::paragraph(body, 15.0, true, 4, 420.0, mtm);
-        b.setAlignment(NSTextAlignment::Center);
-        views.push(Retained::into_super(Retained::into_super(b)));
-    }
-    let buttons_at = views.len();
-    if !buttons.is_empty() {
-        let made: Vec<Retained<objc2_app_kit::NSButton>> =
-            buttons.iter().map(|&(label, action, primary)| ui::pill_button(label, action, 44.0, primary, mtm)).collect();
-        let refs: Vec<&NSView> = made.iter().map(|b| &**b as &NSView).collect();
-        views.push(Retained::into_super(ui::stack(&refs, false, 12.0, mtm)));
-    }
-    if !note.is_empty() {
-        let n = ui::paragraph(note, 12.0, true, 2, 360.0, mtm);
-        n.setAlignment(NSTextAlignment::Center);
-        views.push(Retained::into_super(Retained::into_super(n)));
-    }
-    let refs: Vec<&NSView> = views.iter().map(|v| &**v).collect();
-    let col = ui::stack(&refs, true, 14.0, mtm);
-    if !buttons.is_empty() && buttons_at > 0 {
-        // More room above the buttons.
-        col.setCustomSpacing_afterView(24.0, refs[buttons_at - 1]);
-    }
-    let holder = NSView::new(mtm);
-    holder.addSubview(&col);
-    col.setTranslatesAutoresizingMaskIntoConstraints(false);
-    col.centerXAnchor().constraintEqualToAnchor(&holder.centerXAnchor()).setActive(true);
-    col.centerYAnchor().constraintEqualToAnchor_constant(&holder.centerYAnchor(), -20.0).setActive(true);
-    set_content(&holder);
-    with_shell(|s| crate::debug::schedule_snapshot(&s.window));
-}
-
-fn show_error(text: &str) {
-    message(Screen::Error(text.into()), false, t(S::SomethingWrong), text, &[(t(S::TryAgain), sel!(retry:), true)], "");
-}
-
-fn show_sign_in() {
-    with_shell(|s| shell::select_nav(s, None));
-    message(Screen::SignIn, true, t(S::Welcome), t(S::WelcomeBody), &[(t(S::SignInWithGoogle), sel!(signIn:), true)], t(S::SignInNote));
-}
-
-fn show_empty() {
-    message(Screen::Empty, false, t(S::NothingHere), t(S::NothingHereBody), &[], "");
-}
-
-fn show_signing_out() {
-    message(Screen::SigningOut, false, t(S::SigningOut), "", &[], "");
-}
-
-fn show_sign_out_failed() {
-    message(Screen::SignOutFailed, false, t(S::SignOutFailed), t(S::SignOutFailedBody), &[], "");
-}
-
-/// Developer switch: the volume, what has the keyboard focus, and the search
-/// field's text.
-pub fn describe_keys() -> String {
-    with(|a| {
-        let Some(s) = &a.shell else { return format!("volume {} (no window)", a.volume) };
-        let focus = s.window.firstResponder().map(|r| r.class().name().to_string_lossy().into_owned()).unwrap_or_default();
-        format!(
-            "volume {} muted {} playing {} focus {focus} search {:?}",
-            a.volume,
-            a.unmute_to.is_some(),
-            a.playing,
-            s.search.stringValue()
-        )
-    })
-    .unwrap_or_default()
-}
-
-/// Developer switch: changes the page's width `n` times (by resizing the
-/// window) and says how long the page took to follow, on average.
-pub fn bench_relayout(n: usize) -> String {
-    let Some(window) = with_shell(|s| s.window.clone()) else { return "no window".into() };
-    let frame = window.frame();
-    let mut spent = Duration::ZERO;
-    for i in 0..n {
-        let width = frame.size.width - if i % 2 == 0 { 40.0 } else { 0.0 };
-        window.setFrame_display(objc2_foundation::NSRect::new(frame.origin, objc2_foundation::NSSize::new(width, frame.size.height)), true);
-        window.layoutIfNeeded();
-        let start = Instant::now();
-        with(|a| {
-            if let Some(v) = &a.view {
-                v.refresh();
-            }
-        });
-        spent += start.elapsed();
-    }
-    window.setFrame_display(frame, true);
-    format!("page relayout: {:.2} ms per width change ({n} changes)", spent.as_secs_f64() * 1000.0 / n.max(1) as f64)
-}
-
-/// Developer switch: hands `event` to the page's first shelf, and says
-/// where the page and that shelf are scrolled to then.
-pub fn scroll_shelf(event: &objc2_app_kit::NSEvent) -> String {
-    let Some(Some((page, shelf))) = with(|a| a.view.as_ref().map(|v| (v.root.clone(), v.first_shelf()))) else { return "no page".into() };
-    let Some(shelf) = shelf else { return "no shelf on screen".into() };
-    shelf.scrollWheel(event);
-    format!(
-        "page at {:.0}, shelf at {:.0} (event dx {} dy {})",
-        page.contentView().bounds().origin.y,
-        shelf.contentView().bounds().origin.x,
-        event.scrollingDeltaX(),
-        event.scrollingDeltaY()
-    )
-}
-
-/// Developer switch: a one-line summary of the page and the queue.
-pub fn describe() -> String {
-    with(|a| {
-        let lists: Vec<String> = a
-            .page
-            .iter()
-            .flat_map(|p| p.sections.iter())
-            .map(|s| match s {
-                Section::List { entries, continuation, .. } => {
-                    format!("list {}{}", entries.len(), if continuation.is_some() { "+" } else { "" })
-                }
-                Section::Cards { entries, .. } => format!("cards {}", entries.len()),
-                Section::Grid { entries, .. } => format!("grid {}", entries.len()),
-                Section::Text { .. } => "text".into(),
-            })
-            .collect();
-        let more = a.page.as_ref().is_some_and(|p| p.continuation.is_some());
-        format!(
-            "page [{}]{} queue {}/{} ({}) following {}",
-            lists.join(", "),
-            if more { " +more" } else { "" },
-            a.queue.index() + 1,
-            a.queue.entries().len(),
-            a.queue.current().and_then(Entry::video_id).unwrap_or("-"),
-            a.follow.is_some()
-        )
-    })
-    .unwrap_or_default()
 }

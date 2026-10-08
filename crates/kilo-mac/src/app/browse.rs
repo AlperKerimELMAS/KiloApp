@@ -11,6 +11,7 @@ use kilo_core::queue::Queue;
 
 use super::queue::{self, Follow};
 use super::{Screen, mtm, session, set_content, show_error, show_loading, show_sign_in, with};
+use crate::paths;
 use crate::strings::{S, t};
 use crate::ui::page::{Items, More, PageView};
 use crate::ui::shell;
@@ -18,6 +19,14 @@ use crate::{images, net, pagecache};
 
 thread_local! {
     static REFRESH_PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A page in the history, and how far down it was scrolled when left (to
+/// come back to the same place).
+#[derive(Clone, Debug)]
+pub(super) struct Visit {
+    pub route: Route,
+    pub scrolled: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,28 +63,43 @@ impl Route {
 
 pub fn go(route: Route) {
     super::release_search_focus();
-    let same = with(|a| a.history.last() == Some(&route)).unwrap_or(false);
-    if !same {
-        with(|a| a.history.push(route.clone()));
-    }
-    load(route);
+    let same = with(|a| {
+        let scrolled = a.view.as_ref().map_or(0.0, |v| v.scrolled());
+        if let Some(last) = a.history.last_mut() {
+            last.scrolled = scrolled;
+        }
+        let same = a.history.last().is_some_and(|v| v.route == route);
+        if !same {
+            a.history.push(Visit { route: route.clone(), scrolled: 0.0 });
+        }
+        same
+    })
+    .unwrap_or(false);
+    // The page already showing, chosen again: fresh from YouTube.
+    load(route, same, 0.0);
 }
 
+/// The previous page, where it was scrolled to.
 pub fn back() {
-    if let Some(Some(route)) = with(|a| {
+    if let Some(Some(visit)) = with(|a| {
         (a.history.len() > 1).then(|| {
             a.history.pop();
             a.history.last().cloned()
         })?
     }) {
-        load(route);
+        load(visit.route, false, visit.scrolled);
     }
 }
 
-/// Loads the current page again, or connects again if nothing loaded yet.
+/// Loads the current page again, fresh from YouTube (Reload, Try again), or
+/// connects again if nothing loaded yet. Not while signing in or out.
 pub fn reload() {
-    if let Some(Some(route)) = with(|a| a.history.last().cloned()) {
-        load(route);
+    let Some((route, busy)) = with(|a| (a.history.last().map(|v| v.route.clone()), a.account_busy)) else { return };
+    if busy {
+        return;
+    }
+    if let Some(route) = route {
+        load(route, true, 0.0);
     } else if let Some(s) = session::saved_session() {
         session::start(s);
     } else {
@@ -83,7 +107,10 @@ pub fn reload() {
     }
 }
 
-fn load(route: Route) {
+/// Shows `route`'s page, scrolled to `scrolled`: at once from the page
+/// cache if it's there (and, unless it's fresh, or `force`, again from
+/// YouTube after).
+fn load(route: Route, force: bool, scrolled: f64) {
     let Some((client, generation)) = with(|a| {
         a.generation += 1;
         if let Some(s) = &a.shell {
@@ -97,13 +124,13 @@ fn load(route: Route) {
     let Some(client) = client else { return show_sign_in() };
     // A page shown before appears at once; if it's older than half an hour,
     // a fresh one follows.
-    let file = pagecache::file(&route.cache_name(), &client.config().hl);
-    let cached = pagecache::read(&file).and_then(|(json, fresh)| Some((Rc::new(parse_page(&route, &json).ok()?), fresh)));
+    let file = pagecache::file(&route.cache_name(), &client.config().hl, client.session().fingerprint());
+    let cached = pagecache::read(&file).and_then(|(json, fresh)| Some((Rc::new(parse_page(&route, &json).ok()?), fresh && !force)));
     let from_cache = cached.is_some();
     match cached {
         Some((page, fresh)) => {
             crate::debug::trace(|| format!("page: from cache{}", if fresh { "" } else { " (stale)" }));
-            show_page(page);
+            show_page_at(page, scrolled);
             with(|a| a.stale_page = !fresh);
             if fresh {
                 return;
@@ -112,12 +139,13 @@ fn load(route: Route) {
         None => show_loading(),
     }
     crate::debug::trace(|| format!("page: {route:?} requested"));
+    let epoch = paths::epoch();
     net::run(
         net::Pool::Api,
         move || {
             let json = fetch(&client, &route)?;
             let page = parse_page(&route, &json)?;
-            pagecache::write(&file, &json);
+            pagecache::write(&file, &json, epoch);
             Ok(page)
         },
         move |result: kilo_core::Result<Page>| {
@@ -135,8 +163,8 @@ fn load(route: Route) {
                         show_page(Rc::new(page));
                     }
                 }
-                Ok(page) => show_page(Rc::new(page)),
-                Err(kilo_core::Error::SignedOut) => show_sign_in(),
+                Ok(page) => show_page_at(Rc::new(page), scrolled),
+                Err(kilo_core::Error::SignedOut) => session::session_ended(),
                 Err(e) => {
                     eprintln!("kilo: {e}");
                     if !from_cache {
@@ -169,6 +197,12 @@ fn parse_page(route: &Route, json: &[u8]) -> kilo_core::Result<Page> {
 
 /// Replaces the page area with `page`, at the top.
 pub(super) fn show_page(page: Rc<Page>) {
+    show_page_at(page, 0.0);
+}
+
+/// Replaces the page area with `page`, scrolled `scrolled` points down (as
+/// far as it goes).
+pub(super) fn show_page_at(page: Rc<Page>, scrolled: f64) {
     let mtm = mtm();
     if page.header.is_none() && page.sections.iter().all(|s| s.entries().is_empty() && !matches!(s, Section::Text { .. })) {
         return super::show_empty();
@@ -192,6 +226,9 @@ pub(super) fn show_page(page: Rc<Page>) {
     with(|a| {
         if let Some(s) = &a.shell {
             s.window.layoutIfNeeded();
+            if scrolled > 0.0 {
+                view.scroll_to(Some(scrolled));
+            }
             view.refresh();
             crate::debug::schedule_snapshot(&s.window);
         }
@@ -245,21 +282,25 @@ pub(super) fn fetch_more(kind: More, token: Box<str>) {
         net::Pool::Api,
         move || client.continuation(&t).and_then(|j| parse::browse(&j)),
         move |result| {
-            let Ok(more) = result else {
-                // A page from a stale cache may hold expired tokens: load
-                // it again (the cache is fresh by now).
-                if with(|a| std::mem::take(&mut a.stale_page)).unwrap_or(false) {
-                    crate::debug::trace(|| "page: stale token; reloading".into());
-                    with(|a| a.fetching.retain(|f| *f != token));
-                    return reload();
+            let more = match result {
+                Ok(more) => more,
+                Err(kilo_core::Error::SignedOut) => return session::session_ended(),
+                Err(_) => {
+                    // A page from a stale cache may hold expired tokens: load
+                    // it again (the cache is fresh by now).
+                    if with(|a| std::mem::take(&mut a.stale_page)).unwrap_or(false) {
+                        crate::debug::trace(|| "page: stale token; reloading".into());
+                        with(|a| a.fetching.retain(|f| *f != token));
+                        return reload();
+                    }
+                    // The token stays on the page, so a later scroll retries; not
+                    // before a few seconds, though, or every scroll would (offline).
+                    let when = DispatchTime::NOW.time(5_000_000_000);
+                    let _ = DispatchQueue::main().after(when, move || {
+                        with(|a| a.fetching.retain(|f| *f != token));
+                    });
+                    return;
                 }
-                // The token stays on the page, so a later scroll retries; not
-                // before a few seconds, though, or every scroll would (offline).
-                let when = DispatchTime::NOW.time(5_000_000_000);
-                let _ = DispatchQueue::main().after(when, move || {
-                    with(|a| a.fetching.retain(|f| *f != token));
-                });
-                return;
             };
             with(|a| a.fetching.retain(|f| *f != token));
             match kind {
@@ -327,7 +368,7 @@ fn grow_page(grow: impl FnOnce(&mut Page) -> bool) {
 
 /// A card or row was clicked.
 pub fn activate(item: u32) {
-    let Some(Some((entry, siblings, rest, header))) = with(|a| {
+    let Some(Some((entry, siblings, rest, header, ei))) = with(|a| {
         let &(si, ei) = a.items.get(item as usize)?;
         let page = a.page.as_ref()?;
         let section = page.sections.get(si)?;
@@ -335,19 +376,19 @@ pub fn activate(item: u32) {
             Section::List { continuation, .. } => Some(continuation.clone()),
             _ => None,
         };
-        Some((section.entries().get(ei)?.clone(), section.entries().to_vec(), rest, page.header.clone()))
+        Some((section.entries().get(ei)?.clone(), section.entries().to_vec(), rest, page.header.clone(), ei))
     }) else {
         return;
     };
     match &entry.target {
-        Target::Play { video_id, .. } => {
+        Target::Play { .. } => {
             // A row in a list plays the list from there, like YouTube Music.
-            let (pool, rest) = match rest {
-                Some(rest) => (siblings, rest),
-                None => (vec![entry.clone()], None),
+            let (pool, at, rest) = match rest {
+                Some(rest) => (siblings, ei, rest),
+                None => (vec![entry.clone()], 0, None),
             };
             let follow = rest.map(|next| Follow::new(next, false, header.clone()));
-            queue::start(Queue::from_entries(&queue::decorate(pool, header.as_ref()), video_id), follow);
+            queue::start(Queue::starting_at(&queue::decorate(pool, header.as_ref()), at), follow);
         }
         Target::PlayPlaylist { playlist_id } => queue::play_playlist(playlist_id.to_string()),
         Target::Browse { id, params, .. } => go(Route::Browse { id: id.clone(), params: params.clone() }),
@@ -358,20 +399,20 @@ pub fn activate(item: u32) {
 /// A card's play button: plays its track or mix as a click does, and an
 /// album or playlist without opening it.
 pub fn play_item(item: u32) {
-    let Some(Some((entry, client, queue_id))) = with(|a| {
+    let Some(Some(entry)) = with(|a| {
         let &(si, ei) = a.items.get(item as usize)?;
-        let entry = a.page.as_ref()?.sections.get(si)?.entries().get(ei)?.clone();
-        Some((entry, a.client.clone()?, a.queue_id))
+        Some(a.page.as_ref()?.sections.get(si)?.entries().get(ei)?.clone())
     }) else {
         return;
     };
     let Target::Browse { id, params, .. } = entry.target else { return activate(item) };
+    let Some((client, intent)) = queue::new_intent() else { return };
     net::run(
         net::Pool::Api,
         move || client.browse(&id, params.as_deref()).and_then(|j| parse::browse(&j)),
         move |result| {
-            if with(|a| a.queue_id) != Some(queue_id) {
-                return; // something else started playing meanwhile
+            if !queue::still_wanted(intent) {
+                return; // something else was started meanwhile
             }
             if let Ok(page) = result {
                 queue::play_page(&page, false);

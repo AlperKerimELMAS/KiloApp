@@ -20,7 +20,13 @@ use raw::*;
 /// too long to send (45 KB) or, with wildcards, slow for the server.
 pub fn next_mask() -> &'static str {
     static MASK: OnceLock<String> = OnceLock::new();
-    MASK.get_or_init(raw::mask::<NextResponse>)
+    MASK.get_or_init(raw::mask::<NextFirst>)
+}
+
+/// The mask for more of an endless queue (`Client::next_continuation`).
+pub fn next_more_mask() -> &'static str {
+    static MASK: OnceLock<String> = OnceLock::new();
+    MASK.get_or_init(raw::mask::<NextMore>)
 }
 
 /// The mask for account requests: just the name, handle and photo (about
@@ -41,7 +47,7 @@ pub fn account(json: &[u8]) -> Result<Account> {
     Ok(Account {
         name: join(&h.account_name).into(),
         handle: join(&h.channel_handle).into(),
-        photo: best(&h.account_photo.thumbnails).map(|u| Thumb::new(u, false)),
+        photo: best(&h.account_photo.thumbnails).map(|t| Thumb::new(&t.url, false)),
     })
 }
 
@@ -109,13 +115,23 @@ pub fn search(json: &[u8]) -> Result<Page> {
     Ok(page)
 }
 
-/// "Up next": the queue YouTube Music builds for a track (its radio or the
-/// rest of its playlist). Where a music video comes with its song version,
-/// the song is taken, as YouTube Music does with Song/Video set to Song:
-/// Kilo never shows video, and the song's player streams a still picture
-/// instead of video (measured: 41% less data).
-pub fn up_next(json: &[u8]) -> Result<Vec<Entry>> {
+/// "Up next": a queue YouTube Music builds (a track's radio, a mix, the rest
+/// of a playlist), and the token for more of it when it's endless (radios
+/// and mixes are).
+#[derive(Debug, Default)]
+pub struct UpNext {
+    pub entries: Vec<Entry>,
+    pub continuation: Option<Box<str>>,
+}
+
+/// An "up next" answer, or the continuation of one. Where a music video
+/// comes with its song version, the song is taken, as YouTube Music does
+/// with Song/Video set to Song: Kilo never shows video, and the song's
+/// player streams a still picture instead of video (measured: 41% less
+/// data).
+pub fn up_next(json: &[u8]) -> Result<UpNext> {
     let r: NextResponse = serde_json::from_slice(json).map_err(|e| Error::Parse(e.to_string()))?;
+    let more = r.continuation_contents.and_then(|c| c.playlist_panel_continuation);
     let panel = r
         .contents
         .and_then(|c| c.single_column_music_watch_next_results_renderer)
@@ -123,9 +139,12 @@ pub fn up_next(json: &[u8]) -> Result<Vec<Entry>> {
         .and_then(|t| t.tab_renderer.content)
         .and_then(|c| c.music_queue_renderer)
         .and_then(|q| q.content)
-        .and_then(|c| c.playlist_panel_renderer)
-        .ok_or_else(|| Error::Parse("no queue in response".into()))?;
-    Ok(panel
+        .and_then(|c| c.playlist_panel_renderer);
+    // A continuation answer also carries a (not always empty) first panel:
+    // its own part is the one asked for.
+    let panel = more.or(panel).ok_or_else(|| Error::Parse("no queue in response".into()))?;
+    let continuation = continuation(&panel.continuations);
+    let entries = panel
         .contents
         .into_iter()
         .filter_map(|item| {
@@ -146,12 +165,13 @@ pub fn up_next(json: &[u8]) -> Result<Vec<Entry>> {
                 title: join(&video.title).into(),
                 subtitle: first_segment(&video.short_byline_text.unwrap_or(video.long_byline_text)).into(),
                 // Songs have square art; videos 16:9 frames.
-                thumb: best(&video.thumbnail.thumbnails).map(|u| Thumb::new(u, kind != "MUSIC_VIDEO_TYPE_ATV")),
+                thumb: best(&video.thumbnail.thumbnails).map(|t| Thumb::new(&t.url, kind != "MUSIC_VIDEO_TYPE_ATV")),
                 target: Target::Play { video_id: video.video_id.into(), playlist_id: None, music_video: kind == "MUSIC_VIDEO_TYPE_OMV" },
                 duration: join(&video.length_text).into(),
             })
         })
-        .collect())
+        .collect();
+    Ok(UpNext { entries, continuation })
 }
 
 fn sections(contents: Vec<SectionItem>, page: &mut Page) {
@@ -411,13 +431,15 @@ fn shelf_title(h: &CarouselHeader) -> String {
     h.music_carousel_shelf_basic_header_renderer.as_ref().map(|b| join(&b.title)).unwrap_or_default()
 }
 
+/// The thumbnail, 16:9 when it's at least that wide (a video's): square
+/// slots then ask for enough pixels to crop it sharply.
 fn thumb_of(t: &MusicThumbnail) -> Option<Thumb> {
-    best(&t.thumbnail.thumbnails).map(|u| Thumb::new(u, false))
+    best(&t.thumbnail.thumbnails).map(|t| Thumb::new(&t.url, t.height > 0 && t.width * 10 >= t.height * 16))
 }
 
-/// The largest thumbnail's URL; `Thumb::sized` rescales it as needed.
-fn best(list: &[ThumbnailEntry]) -> Option<&str> {
-    list.iter().max_by_key(|t| t.width).map(|t| t.url.as_str())
+/// The largest thumbnail; `Thumb::sized` rescales it as needed.
+fn best(list: &[ThumbnailEntry]) -> Option<&ThumbnailEntry> {
+    list.iter().max_by_key(|t| t.width)
 }
 
 fn join(t: &Text) -> String {
@@ -523,12 +545,37 @@ mod tests {
             atv = video("lYBUbBu4W08", "MUSIC_VIDEO_TYPE_ATV"),
             other = video("djV11Xbc914", "MUSIC_VIDEO_TYPE_OMV"),
         );
-        let queue = up_next(json.as_bytes()).unwrap();
+        let queue = up_next(json.as_bytes()).unwrap().entries;
         assert_eq!(queue[0].video_id(), Some("lYBUbBu4W08"));
         assert!(!queue[0].is_music_video());
         // A music video without a song version stays as it is.
         assert_eq!(queue[1].video_id(), Some("djV11Xbc914"));
         assert!(queue[1].is_music_video());
+    }
+
+    #[test]
+    fn more_of_a_mix_comes_with_the_token_for_the_next_part() {
+        let json = br#"{"continuationContents":{"playlistPanelContinuation":{"contents":[
+            {"playlistPanelVideoRenderer":{"videoId":"lYBUbBu4W08","title":{"runs":[{"text":"Song"}]}}}],
+            "continuations":[{"nextRadioContinuationData":{"continuation":"MORE"}}]}}}"#;
+        let up = up_next(json).unwrap();
+        assert_eq!(up.entries.len(), 1);
+        assert_eq!(up.continuation.as_deref(), Some("MORE"));
+    }
+
+    #[test]
+    fn wide_thumbnails_are_marked_wide() {
+        let thumb = |w: u32, h: u32| {
+            let t: MusicThumbnail = serde_json::from_str(&format!(
+                r#"{{"thumbnail":{{"thumbnails":[{{"url":"https://i.ytimg.com/vi/x/hq.jpg","width":{w},"height":{h}}}]}}}}"#
+            ))
+            .unwrap();
+            thumb_of(&t).unwrap().wide
+        };
+        assert!(thumb(400, 225));
+        assert!(!thumb(226, 226));
+        // No height given: square, as before.
+        assert!(!thumb(400, 0));
     }
 
     #[test]
@@ -540,7 +587,7 @@ mod tests {
         assert_eq!((&*a.name, &*a.handle), ("Ada", "@ada"));
         assert_eq!(
             account_mask(),
-            "actions(openPopupAction(popup(multiPageMenuRenderer(header(activeAccountHeaderRenderer(accountName(runs(text)),channelHandle(runs(text)),accountPhoto(thumbnails(url,width))))))))"
+            "actions(openPopupAction(popup(multiPageMenuRenderer(header(activeAccountHeaderRenderer(accountName(runs(text)),channelHandle(runs(text)),accountPhoto(thumbnails(url,width,height))))))))"
         );
     }
 
@@ -560,5 +607,8 @@ mod mask_tests {
         assert_eq!(mask.matches('(').count(), mask.matches(')').count());
         assert!(mask.starts_with("contents(singleColumnMusicWatchNextResultsRenderer("));
         assert!(mask.contains("counterpartRenderer(playlistPanelVideoRenderer("));
+        let more = super::next_more_mask();
+        assert!(more.len() < 2048, "{} bytes", more.len());
+        assert!(more.starts_with("continuationContents(playlistPanelContinuation(contents("));
     }
 }

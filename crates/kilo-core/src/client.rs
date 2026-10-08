@@ -86,25 +86,11 @@ impl Config {
         })
     }
 
-    /// Loads a cached config if it's fresh enough.
-    pub fn load(path: &Path) -> Option<Self> {
-        let text = std::fs::read_to_string(path).ok()?;
-        let mut lines = text.lines();
-        let config = Config {
-            version: lines.next()?.to_owned(),
-            visitor: lines.next()?.to_owned(),
-            hl: lines.next()?.to_owned(),
-            gl: lines.next()?.to_owned(),
-            fetched: lines.next()?.parse().ok()?,
-        };
-        (unix_now().saturating_sub(config.fetched) < CONFIG_MAX_AGE_SECS).then_some(config)
-    }
-
+    /// Saves it for the next launch, atomically: a reader sees the old file
+    /// or the new one, never half of one.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(path, format!("{}\n{}\n{}\n{}\n{}\n", self.version, self.visitor, self.hl, self.gl, self.fetched))
+        let text = format!("{}\n{}\n{}\n{}\n{}\n", self.version, self.visitor, self.hl, self.gl, self.fetched);
+        crate::write_atomically(path, text.as_bytes())
     }
 }
 
@@ -174,14 +160,10 @@ impl Client {
         self.call("search", body, None)
     }
 
-    pub fn search_suggestions(&self, input: &str) -> Result<Vec<u8>> {
-        self.call("music/get_search_suggestions", json!({ "input": input }), None)
-    }
-
     /// "Up next" for a track: its radio, or the rest of the playlist it was
     /// started from.
     pub fn next(&self, video_id: &str, playlist_id: Option<&str>) -> Result<Vec<u8>> {
-        let playlist = playlist_id.map_or_else(|| format!("RDAMVM{video_id}"), str::to_owned);
+        let playlist = playlist_id.map_or_else(|| Self::radio_id(video_id), str::to_owned);
         self.call(
             "next",
             json!({
@@ -200,6 +182,26 @@ impl Client {
     /// where a radio (`next`) is about 800 KB.
     pub fn next_single(&self, video_id: &str) -> Result<Vec<u8>> {
         self.call("next", json!({ "videoId": video_id, "isAudioOnly": true }), Some(crate::parse::next_mask()))
+    }
+
+    /// More of an endless queue (a mix, a radio) that `playlist_id` started:
+    /// `token` comes from the previous part (`parse::UpNext`).
+    pub fn next_continuation(&self, playlist_id: &str, token: &str) -> Result<Vec<u8>> {
+        self.call(
+            "next",
+            json!({
+                "playlistId": playlist_id,
+                "continuation": token,
+                "isAudioOnly": true,
+                "enablePersistentPlaylistPanel": true,
+            }),
+            Some(crate::parse::next_more_mask()),
+        )
+    }
+
+    /// The radio playlist of a track, as `next` asks for it.
+    pub fn radio_id(video_id: &str) -> String {
+        format!("RDAMVM{video_id}")
     }
 
     /// The queue for playing a whole playlist or mix from its start.

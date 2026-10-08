@@ -201,7 +201,7 @@ raw! {
     struct ThumbnailHolder { music_thumbnail_renderer: Option<MusicThumbnail> }
     struct MusicThumbnail { thumbnail: ThumbnailList }
     struct ThumbnailList { thumbnails: Vec<ThumbnailEntry> }
-    struct ThumbnailEntry { url: String, width: u32 }
+    struct ThumbnailEntry { url: String, width: u32, height: u32 }
 
     struct Continuation {
         next_continuation_data: Option<ContinuationData>,
@@ -220,7 +220,13 @@ raw! {
     struct MenuHeader { active_account_header_renderer: Option<AccountHeader> }
     struct AccountHeader { account_name: Text, channel_handle: Text, account_photo: ThumbnailList }
 
-    struct NextResponse { contents: Option<NextContents> }
+    struct NextResponse { contents: Option<NextContents>, continuation_contents: Option<NextContinuation> }
+    /// The fields of a first "up next" answer (its field mask).
+    struct NextFirst { contents: Option<NextContents> }
+    /// The fields of a continuation (its field mask).
+    struct NextMore { continuation_contents: Option<NextContinuation> }
+    /// More of an endless queue (a mix, a radio).
+    struct NextContinuation { playlist_panel_continuation: Option<PlaylistPanel> }
     struct NextContents { single_column_music_watch_next_results_renderer: Option<WatchNext> }
     struct WatchNext { tabbed_renderer: TabbedRenderer }
     struct TabbedRenderer { watch_next_tabbed_results_renderer: NextTabs }
@@ -230,7 +236,7 @@ raw! {
     struct NextTabContent { music_queue_renderer: Option<QueueRenderer> }
     struct QueueRenderer { content: Option<QueueContent> }
     struct QueueContent { playlist_panel_renderer: Option<PlaylistPanel> }
-    struct PlaylistPanel { contents: Vec<PanelItem> }
+    struct PlaylistPanel { contents: Vec<PanelItem>, continuations: Vec<Continuation> }
     struct PanelItem {
         playlist_panel_video_renderer: Option<PanelVideo>,
         playlist_panel_video_wrapper_renderer: Option<PanelWrapper>,

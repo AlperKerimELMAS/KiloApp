@@ -35,6 +35,14 @@ impl Session {
         session.signed_in().then_some(session)
     }
 
+    /// Tells sign-ins apart (each has its own `SAPISID`) without saying
+    /// anything about the cookie: what's cached for one is never shown to
+    /// another.
+    pub fn fingerprint(&self) -> u64 {
+        let sapisid = self.get("SAPISID").or_else(|| self.get("__Secure-3PAPISID")).unwrap_or("");
+        crate::fnv1a(format!("kilo-session\n{sapisid}").as_bytes())
+    }
+
     pub fn signed_in(&self) -> bool {
         self.get("SAPISID").or_else(|| self.get("__Secure-3PAPISID")).is_some()
     }

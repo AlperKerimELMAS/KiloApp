@@ -4,8 +4,8 @@
 use std::io::Read;
 use std::time::Duration;
 
-use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+use ureq::{Agent, ResponseExt};
 
 use crate::{Error, Result};
 
@@ -54,6 +54,16 @@ impl Http {
 
     pub fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>> {
         read_all(self.call_get(url, headers)?)
+    }
+
+    /// Like `get`, for a URL that must stay `trusted` where any redirects
+    /// lead: the body is read only from a trusted final URL.
+    pub fn get_trusted(&self, url: &str, headers: &[(&str, &str)], trusted: fn(&str) -> bool) -> Result<Vec<u8>> {
+        let resp = self.call_get(url, headers)?;
+        if !trusted(&resp.get_uri().to_string()) {
+            return Err(Error::Http("redirected away from a trusted host".into()));
+        }
+        read_all(resp)
     }
 
     /// Only the first `max` bytes of the body; the rest is never downloaded.
