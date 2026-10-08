@@ -416,11 +416,15 @@ the window's size), 27 MB with the window closed, 0% CPU when idle.
      (`plutil -replace`), re-sign it, and run its helpers. WebKit and
      `paths` key everything by the bundle id. Delete the copy's
      `~/Library/{WebKit,Caches,HTTPStorages}/<id>*` afterwards.
-4. **Before publishing:**
-   - Licensed MIT (`LICENSE`, 2026-10-08); personal details are out of the
-     docs.
-   - Get the owner's go-ahead before creating a GitHub remote. CI
-     (`.github/workflows/ci.yml`) runs once it's pushed.
+4. **Publishing:**
+   - On GitHub since 2026-10-08: `github.com/AlperKerimELMAS/KiloApp`,
+     private for now; CI (`.github/workflows/ci.yml`) runs on every push.
+     Making it public, releases and anything else outward-facing are the
+     owner's call.
+   - Licensed MIT (`LICENSE`). Before the first push the history was
+     rewritten: commits carry the owner's GitHub no-reply address (this
+     clone's `user.email`), and the old HANDOFF's personal details are out
+     of every commit.
    - Optionally, Developer ID signing and notarization.
 5. **Features:** a Now Playing view (big art plus Up next and Lyrics), a
    queue panel, like/dislike, add to playlist, the playing track marked in
