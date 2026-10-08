@@ -6,7 +6,7 @@ session). For depth:
 - `docs/PLAN.md`: design and every measurement.
 - `docs/COMPARISON.md`: the measured comparison with Chrome.
 
-**Last updated:** 2026-10-07 (cleanup before publishing) · **Version:** 0.2 ·
+**Last updated:** 2026-10-08 (license, cleanup before publishing) · **Version:** 0.2 ·
 **Branch:** `main` (no remote yet)
 
 ---
@@ -14,8 +14,8 @@ session). For depth:
 ## 1. What Kilo is
 
 Kilo is the most resource-efficient YouTube Music desktop client we can
-build. The owner's motto is **"every single kilobyte counts."** It was
-inspired by Spotifast, a native Rust Spotify client that claims 100–250 MB.
+build. The motto is **"every single kilobyte counts."** It was inspired by
+Spotifast, a native Rust Spotify client that claims 100–250 MB.
 
 **Goals:**
 - Professional, legal, and open source.
@@ -25,7 +25,7 @@ inspired by Spotifast, a native Rust Spotify client that claims 100–250 MB.
   account's own language and region (`hl`, `gl`, read from
   music.youtube.com's page config).
 
-**Today:** `Kilo.app` is installed in `/Applications` and works:
+**Today:** Kilo works on macOS:
 - Home, Explore, Library, search, and album, playlist and artist pages.
 - Sign-in through Google's page.
 - Playback with a queue and radio continuation.
@@ -234,10 +234,8 @@ loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
      youtube.com cookies. Today WebKit's file holds the full Google session
      unencrypted, in a folder only the user can read.
 4. **Before publishing:**
-   - Choose a license (MIT suggested; not decided yet). Then add `LICENSE`,
-     `license` in `Cargo.toml`, and update the README's License section.
-   - Decide whether `docs/HANDOFF.md` and `CLAUDE.md` (working notes,
-     including details about the owner's account) go public as they are.
+   - Licensed MIT (`LICENSE`, 2026-10-08); personal details are out of the
+     docs.
    - Get the owner's go-ahead before creating a GitHub remote. CI
      (`.github/workflows/ci.yml`) runs once it's pushed.
    - Optionally, Developer ID signing and notarization.

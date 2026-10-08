@@ -3,6 +3,7 @@ name = "kilo-player"
 description = "Plays audio through YouTube's own player in a hidden system web view, in a helper process"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [lints]

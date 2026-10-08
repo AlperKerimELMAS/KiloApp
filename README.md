@@ -14,7 +14,7 @@ Measured on one Mac (Apple Silicon, macOS 27); see
 [`docs/COMPARISON.md`](docs/COMPARISON.md) for how.
 
 Kilo is an unofficial client. It isn't affiliated with, or endorsed by,
-YouTube or Google.
+YouTube or Google. YouTube and YouTube Music are trademarks of Google LLC.
 
 ## How it works
 
@@ -92,4 +92,4 @@ are listed in [`crates/kilo-mac/src/debug.rs`](crates/kilo-mac/src/debug.rs).
 
 ## License
 
-Not chosen yet.
+[MIT](LICENSE).

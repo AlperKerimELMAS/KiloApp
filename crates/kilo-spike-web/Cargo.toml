@@ -3,6 +3,7 @@ name = "kilo-spike-web"
 description = "Spike: measure the cost of YouTube's own player in a hidden system web view"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [lints]

@@ -3,6 +3,7 @@ name = "kilo-core"
 description = "Cross-platform core: YouTube Music API client, parsers, models and queue"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [lints]
