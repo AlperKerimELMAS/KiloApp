@@ -12,7 +12,7 @@ use kilo_core::queue::Queue;
 
 use super::browse::fetch_more;
 use super::player::play_current;
-use super::with;
+use super::{session, with};
 use crate::net;
 use crate::ui::page::More;
 
@@ -134,14 +134,25 @@ pub(super) fn play_playlist(playlist_id: String) {
             if !still_wanted(intent) {
                 return; // something else was started meanwhile
             }
-            if let Ok((up, playlist)) = result
-                && !up.entries.is_empty()
-            {
-                let endless = up.continuation.map(|token| (playlist.into(), token));
-                start_endless(Queue::starting_at(&up.entries, 0), None, endless);
+            match result {
+                Ok((up, playlist)) if !up.entries.is_empty() => {
+                    let endless = up.continuation.map(|token| (playlist.into(), token));
+                    start_endless(Queue::starting_at(&up.entries, 0), None, endless);
+                }
+                Ok(_) => {}
+                Err(e) => failed(e),
             }
         },
     );
+}
+
+/// A request for something to play failed. What was playing goes on; a
+/// session YouTube no longer accepts ends here too.
+pub(super) fn failed(e: kilo_core::Error) {
+    match e {
+        kilo_core::Error::SignedOut => session::session_ended(),
+        e => eprintln!("kilo: {e}"),
+    }
 }
 
 /// Plays a song by id, queued with its radio (as YouTube Music does when a
@@ -155,9 +166,12 @@ pub fn play_video(video_id: String) {
             if !still_wanted(intent) {
                 return; // something else was started meanwhile
             }
-            if let Ok((up, id)) = result {
-                let endless = up.continuation.map(|token| (Client::radio_id(&id).into(), token));
-                start_endless(Queue::from_entries(&up.entries, &id), None, endless);
+            match result {
+                Ok((up, id)) => {
+                    let endless = up.continuation.map(|token| (Client::radio_id(&id).into(), token));
+                    start_endless(Queue::from_entries(&up.entries, &id), None, endless);
+                }
+                Err(e) => failed(e),
             }
         },
     );
@@ -286,6 +300,7 @@ pub(super) fn extend() {
                     });
                     carry_on();
                 }
+                (Err(kilo_core::Error::SignedOut), _) => session::session_ended(),
                 // Asked again later (the next track change, or end).
                 (Err(_), Ask::More { playlist, token }) => {
                     with(|a| a.endless = Some(Endless { queue_id, playlist, token }));

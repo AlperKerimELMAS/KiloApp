@@ -267,13 +267,13 @@ fn check_more() {
 /// Fetches the part of a page that `token` points to, then adds it to the
 /// page (if it's still on screen) and to a queue following it.
 pub(super) fn fetch_more(kind: More, token: Box<str>) {
-    let Some(Some(client)) = with(|a| {
+    let Some(Some((client, session))) = with(|a| {
         let client = a.client.clone()?;
         if a.fetching.contains(&token) {
             return None;
         }
         a.fetching.push(token.clone());
-        Some(client)
+        Some((client, a.session))
     }) else {
         return;
     };
@@ -282,13 +282,19 @@ pub(super) fn fetch_more(kind: More, token: Box<str>) {
         net::Pool::Api,
         move || client.continuation(&t).and_then(|j| parse::browse(&j)),
         move |result| {
+            if with(|a| a.session) != Some(session) {
+                return; // signed out meanwhile: nothing of it is wanted
+            }
             let more = match result {
                 Ok(more) => more,
                 Err(kilo_core::Error::SignedOut) => return session::session_ended(),
                 Err(_) => {
                     // A page from a stale cache may hold expired tokens: load
-                    // it again (the cache is fresh by now).
-                    if with(|a| std::mem::take(&mut a.stale_page)).unwrap_or(false) {
+                    // it again (the cache is fresh by now). Only if the token
+                    // is the page's: the queue may be following another list.
+                    let reload_page =
+                        with(|a| a.page.as_deref().is_some_and(|p| holds_token(p, &token)) && std::mem::take(&mut a.stale_page));
+                    if reload_page.unwrap_or(false) {
                         crate::debug::trace(|| "page: stale token; reloading".into());
                         with(|a| a.fetching.retain(|f| *f != token));
                         return reload();
@@ -340,6 +346,13 @@ pub(super) fn fetch_more(kind: More, token: Box<str>) {
             }
         },
     );
+}
+
+/// Whether `token` is where `page` goes on: its own next part, or the rest
+/// of one of its lists.
+fn holds_token(page: &Page, token: &str) -> bool {
+    page.continuation.as_deref() == Some(token)
+        || page.sections.iter().any(|s| matches!(s, Section::List { continuation: Some(c), .. } if &**c == token))
 }
 
 /// Replaces the page on screen with a grown copy of it, keeping the scroll
@@ -414,8 +427,9 @@ pub fn play_item(item: u32) {
             if !queue::still_wanted(intent) {
                 return; // something else was started meanwhile
             }
-            if let Ok(page) = result {
-                queue::play_page(&page, false);
+            match result {
+                Ok(page) => queue::play_page(&page, false),
+                Err(e) => queue::failed(e),
             }
         },
     );
@@ -438,4 +452,21 @@ pub fn scroll_by(points: f64, screens: f64) {
             v.scroll_by(points, screens);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use kilo_core::model::{Page, Section};
+
+    use super::holds_token;
+
+    #[test]
+    fn knows_which_tokens_are_the_pages() {
+        let list = |token: Option<&str>| Section::List { title: "".into(), entries: Vec::new(), continuation: token.map(Into::into) };
+        let page = Page { header: None, sections: vec![list(None), list(Some("ROWS"))], continuation: Some("SHELVES".into()) };
+        assert!(holds_token(&page, "SHELVES"));
+        assert!(holds_token(&page, "ROWS"));
+        // Another list's (one a queue follows, say).
+        assert!(!holds_token(&page, "ELSEWHERE"));
+    }
 }

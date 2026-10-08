@@ -37,7 +37,7 @@ pub fn config() -> PathBuf {
 
 /// Where versions up to 0.3 kept the page config, whatever the bundle id.
 fn legacy_config() -> PathBuf {
-    home().join("Library/Application Support/Kilo")
+    home().join("Library/Application Support/Kilo/innertube.txt")
 }
 
 /// Bumped when an account's data is let go of (signing out, a session that
@@ -89,8 +89,13 @@ fn webkit() -> PathBuf {
 pub fn remove_own_data() -> bool {
     // Every deletion is tried, whatever failed before it.
     let support = config().parent().map(Path::to_path_buf).unwrap_or_default();
-    let files = [config(), cookies()].map(|f| removed(std::fs::remove_file(f)));
-    let dirs = [support, legacy_config(), caches(), webkit()].map(|d| removed(std::fs::remove_dir_all(d)));
+    let files = [config(), cookies(), legacy_config()].map(|f| removed(std::fs::remove_file(f)));
+    let dirs = [support, caches(), webkit()].map(|d| removed(std::fs::remove_dir_all(d)));
+    // The old config's folder only if that left it empty: "Kilo" is a
+    // common name, and another app may keep its files there.
+    if let Some(old) = legacy_config().parent() {
+        let _ = std::fs::remove_dir(old);
+    }
     let copies = remove_cookie_copies();
     files.into_iter().chain(dirs).all(|ok| ok) && copies
 }
@@ -151,14 +156,24 @@ mod tests {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(&file, b"x").unwrap();
         }
-        let legacy = legacy_config().join("innertube.txt");
-        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        std::fs::write(&legacy, b"x").unwrap();
+        // The old config's folder has a generic name: another app's file in
+        // it stays (and so does the folder).
+        let legacy = legacy_config();
+        let neighbour = legacy.with_file_name("someone-elses.db");
+        for file in [&legacy, &neighbour] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"x").unwrap();
+        }
         assert!(remove_own_data());
-        for gone in [cookies(), config(), caches(), webkit(), copy, legacy] {
+        for gone in [cookies(), config(), caches(), webkit(), copy, legacy.clone()] {
             assert!(!gone.exists(), "{}", gone.display());
         }
-        assert!(other.exists());
+        assert!(other.exists() && neighbour.exists());
+        // Alone in it, Kilo's old config takes the folder with it.
+        std::fs::remove_file(&neighbour).unwrap();
+        std::fs::write(&legacy, b"x").unwrap();
+        assert!(remove_own_data());
+        assert!(!legacy.parent().unwrap().exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

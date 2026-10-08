@@ -434,7 +434,9 @@ fn shelf_title(h: &CarouselHeader) -> String {
 /// The thumbnail, 16:9 when it's at least that wide (a video's): square
 /// slots then ask for enough pixels to crop it sharply.
 fn thumb_of(t: &MusicThumbnail) -> Option<Thumb> {
-    best(&t.thumbnail.thumbnails).map(|t| Thumb::new(&t.url, t.height > 0 && t.width * 10 >= t.height * 16))
+    // In u64: the sizes are the server's, and no product of two u32s
+    // overflows it.
+    best(&t.thumbnail.thumbnails).map(|t| Thumb::new(&t.url, t.height > 0 && u64::from(t.width) * 10 >= u64::from(t.height) * 16))
 }
 
 /// The largest thumbnail; `Thumb::sized` rescales it as needed.
@@ -576,6 +578,9 @@ mod tests {
         assert!(!thumb(226, 226));
         // No height given: square, as before.
         assert!(!thumb(400, 0));
+        // Absurd sizes from the server don't overflow.
+        assert!(thumb(u32::MAX, 1));
+        assert!(!thumb(1, u32::MAX));
     }
 
     #[test]

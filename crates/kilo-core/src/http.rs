@@ -5,6 +5,7 @@ use std::io::Read;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use ureq::config::RedirectAuthHeaders;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 use ureq::{Agent, ResponseExt};
 
@@ -67,6 +68,10 @@ impl Http {
             // Every request, and every redirect, is https: nothing Kilo
             // fetches (or decodes) travels in the clear.
             .https_only(true)
+            // A redirect never carries the session: ureq always drops the
+            // Cookie header, and with this the Authorization one too (its
+            // default, stated so it stays that way).
+            .redirect_auth_headers(RedirectAuthHeaders::Never)
             .http_status_as_error(false)
             // ureq's default is 128 KB each way per pooled connection: 1.5 MB
             // measured. Requests are a few KB and bodies stream through.

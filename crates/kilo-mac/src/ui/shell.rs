@@ -1,8 +1,9 @@
 //! The window, laid out like Spotify: one dark frame (light, in light mode)
 //! holding the sidebar and the player bar, and pages on a rounded panel
-//! with the back button, search and the account button on top. The frame used to be the desktop blurred behind the window,
-//! which tinted the sidebar with the wallpaper's colors so it looked like a
-//! separate part; a plain color also costs nothing (the blur was 0.2 MB).
+//! with the back button, search and the account button on top. The frame
+//! used to be the desktop blurred behind the window, which tinted the
+//! sidebar with the wallpaper's colors so it looked like a separate part; a
+//! plain color also costs nothing (the blur was 0.2 MB).
 
 use std::cell::Cell;
 

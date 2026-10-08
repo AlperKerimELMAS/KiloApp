@@ -52,6 +52,9 @@ pub(super) fn play_current(start: f64) {
                 if with(|a| a.play_token) != Some(token) {
                     return; // the user moved on
                 }
+                if let Err(kilo_core::Error::SignedOut) = result {
+                    return session::session_ended();
+                }
                 if let Some(song) =
                     result.ok().and_then(|q| q.entries.into_iter().next()).filter(|s| !s.is_music_video() && s.video_id().is_some())
                 {
@@ -400,8 +403,8 @@ pub(super) fn restore_bar() {
 }
 
 fn show_now_playing(entry: &Entry) {
-    with(|a| {
-        let Some(s) = &a.shell else { return };
+    let art = with(|a| {
+        let s = a.shell.as_ref()?;
         let bar = &s.bar;
         bar.title.setStringValue(&NSString::from_str(&entry.title));
         bar.artist.setStringValue(&NSString::from_str(&entry.subtitle));
@@ -409,19 +412,21 @@ fn show_now_playing(entry: &Entry) {
         bar.total.setStringValue(&NSString::from_str(""));
         bar.progress.set_value(0.0);
         ui::set_image(&bar.art, None);
-        if let Some(t) = &entry.thumb {
-            // Square: a music video's 16:9 picture is cropped to fit.
-            let px = ui::square_px(56.0, s.window.backingScaleFactor(), t.wide);
-            let art = bar.art.clone();
-            let url = t.sized(px);
-            images::load(url.clone(), px, move |img| {
-                // Only if it's still this track's (a slow image for the
-                // previous one mustn't land on the next).
-                let current = with(|a| a.queue.current().and_then(|e| e.thumb.as_ref()).is_some_and(|t| t.sized(px) == url));
-                if current == Some(true) {
-                    ui::set_image(&art, img.as_ref());
-                }
-            });
+        let t = entry.thumb.as_ref()?;
+        // Square: a music video's 16:9 picture is cropped to fit.
+        let px = ui::square_px(56.0, s.window.backingScaleFactor(), t.wide);
+        Some((bar.art.clone(), t.sized(px), px))
+    })
+    .flatten();
+    let Some((art, url, px)) = art else { return };
+    // Outside the state: an image decoded before (the album's art, for its
+    // next track) comes back at once, and the check below needs the state.
+    images::load(url.clone(), px, move |img| {
+        // Only if it's still this track's (a slow image for the previous
+        // one mustn't land on the next).
+        let current = with(|a| a.queue.current().and_then(|e| e.thumb.as_ref()).is_some_and(|t| t.sized(px) == url));
+        if current == Some(true) {
+            ui::set_image(&art, img.as_ref());
         }
     });
 }
@@ -487,8 +492,9 @@ fn clock(secs: f64) -> String {
 /// Starts the countdown to shutting the helper down once playback stops
 /// (paused, or the queue ran out). It runs from the first stop: later
 /// "paused" reports from the page don't restart it; only playing again
-/// cancels it. With the window closed, App Nap may make it fire a little
-/// late, and macOS may quit the idle helper on its own first.
+/// cancels it, and a track still loading when it ends keeps the helper.
+/// With the window closed, App Nap may make it fire a little late, and
+/// macOS may quit the idle helper on its own first.
 fn schedule_idle_shutdown() {
     let Some(Some(token)) = with(|a| (!std::mem::replace(&mut a.idle_armed, true)).then_some(a.idle_token)) else {
         return;
@@ -501,7 +507,9 @@ fn schedule_idle_shutdown() {
                 return None;
             }
             a.idle_armed = false;
-            if a.playing { None } else { a.player.take() }
+            // Not while a track the user just chose is loading: a pause
+            // that ends in a new track isn't idle.
+            if a.playing || a.loading.is_some() { None } else { a.player.take() }
         })
         .flatten();
         if let Some(player) = player {

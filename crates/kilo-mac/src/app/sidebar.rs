@@ -66,6 +66,16 @@ pub fn toggle_sidebar() {
     SIDEBAR.set(Some(SidebarAnimation { link, from, to, start: Instant::now(), frames: 0, slowest: Duration::ZERO }));
 }
 
+/// Ends a slide still under way, for a window whose views are going away
+/// (closed or rebuilt): new views start as the setting says, and a display
+/// link left on views no longer on screen might never fire again to end
+/// itself, which would leave the ☰ button doing nothing.
+pub(super) fn stop_animation() {
+    if let Some(a) = SIDEBAR.take() {
+        a.link.invalidate();
+    }
+}
+
 /// One frame of the sidebar animation (from its display link): the
 /// sidebar's width eases out, and the page follows (only re-framed, so a
 /// frame costs well under a millisecond).

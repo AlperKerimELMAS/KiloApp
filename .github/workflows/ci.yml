@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, so a new advisory against a dependency shows up without a push.
+  schedule:
+    - cron: "0 6 * * 1"
 
 # The workflow only reads the repository.
 permissions:
@@ -40,3 +43,16 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --locked --release -p kilo-core -p kilo-player -p kilo-probe --all-targets -- -D warnings
       - run: cargo test --locked -p kilo-core -p kilo-player -p kilo-probe
+
+  audit:
+    name: Dependency advisories (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # A pinned version, built from crates.io with its own lockfile.
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit

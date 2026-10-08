@@ -341,6 +341,7 @@ fn rebuild_window() {
         return;
     };
     ui::reset_hover_play();
+    sidebar::stop_animation();
     open_window(Some(window));
     restore_screen(scrolled);
 }
@@ -437,6 +438,7 @@ fn window_closed() {
         shell.window.setDelegate(None);
         drop(shell);
     }
+    sidebar::stop_animation();
     player::sync_timer();
     images::purge_memory();
 }

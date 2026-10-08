@@ -147,6 +147,10 @@ fn http() -> &'static Http {
 /// at most `px` pixels on its longer side, to `done` on the main thread.
 /// (Some URLs come at one size only, so the decoded size is part of the
 /// key: a small decode isn't handed to a large view.)
+///
+/// An image decoded before is handed to `done` at once, before `load`
+/// returns (so a view scrolled back into sight never flashes empty): don't
+/// call this inside `app::with` if `done` needs the app's state.
 pub fn load(url: String, px: u32, done: impl FnOnce(Option<Image>) + 'static) {
     let key = format!("{px} {url}");
     if let Some(img) = CACHE.with_borrow_mut(|c| c.get(&key)) {
@@ -261,10 +265,7 @@ fn written(bytes: u64) {
 fn decode(bytes: &[u8], px: u32, letterboxed: bool) -> Option<Image> {
     let image = thumbnail(bytes, px)?;
     let (w, h) = (CGImage::width(Some(&image)), CGImage::height(Some(&image)));
-    // YouTube's larger video thumbnails are 4:3, with the 16:9 picture
-    // between black bars. Keeping just the picture saves a quarter of the
-    // pixels, and square art views no longer show the bars.
-    let band = if letterboxed && w > 0 && (h * 4).abs_diff(w * 3) <= 8 { w * 9 / 16 } else { h };
+    let band = picture_rows(w, h, letterboxed);
     let surface = surface(w, band)?;
     // SAFETY: kCGColorSpaceSRGB is a constant string.
     let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))?;
@@ -286,6 +287,15 @@ fn decode(bytes: &[u8], px: u32, letterboxed: bool) -> Option<Image> {
         }
     }
     Some(Image(surface))
+}
+
+/// How many of a `w`×`h` image's rows to keep: all of them, or for a
+/// `letterboxed` one that's 4:3, only the 16:9 picture between its bars.
+/// (YouTube's larger video thumbnails are like that. Keeping just the
+/// picture saves a quarter of the pixels, and square art views no longer
+/// show the bars.)
+fn picture_rows(w: usize, h: usize, letterboxed: bool) -> usize {
+    if letterboxed && w > 0 && (h * 4).abs_diff(w * 3) <= 8 { (w * 9 / 16).min(h) } else { h }
 }
 
 /// A `w`×`h` BGRA surface.
@@ -389,5 +399,22 @@ fn trim_files() {
         if std::fs::remove_file(path).is_ok() {
             total -= len;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::picture_rows;
+
+    #[test]
+    fn keeps_the_picture_between_the_bars() {
+        // A 4:3 video frame: the 16:9 picture in it.
+        assert_eq!(picture_rows(480, 360, true), 270);
+        // Already 16:9, or not a video frame: all of it.
+        assert_eq!(picture_rows(320, 180, true), 180);
+        assert_eq!(picture_rows(480, 360, false), 360);
+        // Tiny images never ask for more rows than they have.
+        assert_eq!(picture_rows(4, 1, true), 1);
+        assert_eq!(picture_rows(0, 0, true), 0);
     }
 }

@@ -439,10 +439,11 @@ fn on_page_message(msg: &str) {
             let mut w = rest.split(' ');
             let (Some(seconds), Some(duration)) = (time(w.next()), time(w.next())) else { return };
             let video = w.next().and_then(VideoId::parse);
-            let expected = with(|h| h.expected.clone());
             // A report means the player is there, even if `player` was
-            // missed.
+            // missed. First, though: the commands that waited for it may
+            // load another track, and then this report is about an old one.
             player_ready();
+            let expected = with(|h| h.expected.clone());
             let Some(video) = video.filter(|v| Some(v) == expected.as_ref()) else {
                 if kind == "playing" {
                     // Never play anything the app didn't ask for.

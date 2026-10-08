@@ -265,6 +265,11 @@ fn keep_youtube_cookies(web_view: &WKWebView) {
                 })
                 .collect(),
         );
+        if youtube.is_empty() {
+            // Nothing to wait for (and no completion would ever come): the
+            // app sees an empty report, and the sign-in screen again.
+            report_and_exit(&report);
+        }
         // SAFETY: main-thread WebKit call.
         let store = unsafe { WKWebsiteDataStore::defaultDataStore(mtm).httpCookieStore() };
         let left = Rc::new(Cell::new(youtube.len()));

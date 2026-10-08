@@ -3,12 +3,11 @@
 //! Samples a process and all its descendants at a fixed interval and prints
 //! footprint, CPU (% of one core) and wakeups per second.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
-
-use std::collections::HashMap;
 
 use kilo_probe::{Sample, find_by_name, sample_each, total, used_between};
 

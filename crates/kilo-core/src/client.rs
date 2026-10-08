@@ -224,7 +224,7 @@ impl Client {
 
     /// Calls `endpoint`, with a field mask if given, so the answer holds only
     /// what Kilo parses. If the server rejects the mask, the request goes
-    /// again without it.
+    /// again without it, and so do later ones.
     fn call(&self, endpoint: &str, mut body: serde_json::Value, mask: Option<&'static str>) -> Result<Vec<u8>> {
         body["context"] = json!({
             "client": {
@@ -256,15 +256,22 @@ impl Client {
         if let Some(mask) = mask.filter(|m| self.masks && !rejected(m)) {
             let mut masked = headers.to_vec();
             masked.push(("X-Goog-FieldMask", mask));
-            match self.http.post_json(&url, &masked, &body) {
+            return match self.http.post_json(&url, &masked, &body) {
+                // A 400 is the mask's fault only if the same request goes
+                // through without it: an expired continuation, say, fails
+                // both ways, and mustn't cost every later request its mask.
                 Err(Error::Status(400)) => {
-                    if let Ok(mut r) = REJECTED_MASKS.lock() {
-                        r.push(mask);
+                    let result = self.http.post_json(&url, &headers, &body);
+                    if result.is_ok() {
+                        if let Ok(mut r) = REJECTED_MASKS.lock() {
+                            r.push(mask);
+                        }
+                        eprintln!("kilo: {endpoint} field mask rejected; sending full requests");
                     }
-                    eprintln!("kilo: {endpoint} field mask rejected; sending full requests");
+                    result
                 }
-                result => return result,
-            }
+                result => result,
+            };
         }
         self.http.post_json(&url, &headers, &body)
     }

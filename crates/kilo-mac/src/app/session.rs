@@ -294,6 +294,8 @@ fn forget(a: &mut App) -> Option<PlayerProcess> {
     a.duration = 0.0;
     a.idle_token += 1;
     a.idle_armed = false;
+    // Whatever the old helper still says (it's being stopped) is ignored.
+    a.player_serial += 1;
     a.player.take()
 }
 
