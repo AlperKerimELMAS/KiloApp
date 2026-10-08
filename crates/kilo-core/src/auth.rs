@@ -77,6 +77,34 @@ impl Session {
     }
 }
 
+/// Whether a cookie's domain is youtube.com or one of its subdomains (an
+/// exact match: `notyoutube.com` isn't).
+pub fn is_youtube_domain(domain: &str) -> bool {
+    let domain = domain.strip_prefix('.').unwrap_or(domain);
+    under(domain, "youtube.com")
+}
+
+/// Whether the sign-in window may show `host`: Google's sign-in and the
+/// YouTube pages it leads back to (any google.com or youtube.com host), and
+/// Google's country domains, which sign-in may pass through to set their
+/// cookies (`accounts.google.com.tr`). Anything else opens in the browser:
+/// the window has no address bar, so it never shows a page the user can't
+/// tell apart from Google's.
+pub fn is_sign_in_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    if under(&host, "google.com") || under(&host, "youtube.com") {
+        return true;
+    }
+    let Some(tld) = host.strip_prefix("accounts.google.") else { return false };
+    let country = tld.strip_prefix("co.").or_else(|| tld.strip_prefix("com.")).unwrap_or(tld);
+    country.len() == 2 && country.bytes().all(|b| b.is_ascii_lowercase())
+}
+
+/// `host` is `domain` or a subdomain of it.
+fn under(host: &str, domain: &str) -> bool {
+    host.strip_suffix(domain).is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
+}
+
 /// Parses WebKit's `.binarycookies` file (how WKWebView stores cookies on
 /// macOS). Returns `None` if the file is malformed.
 pub fn parse_binary_cookies(data: &[u8]) -> Option<Vec<Cookie>> {
@@ -127,6 +155,43 @@ mod tests {
         let (ts, digest) = h.strip_prefix("SAPISIDHASH ").unwrap().split_once('_').unwrap();
         let expect = sha1_smol::Sha1::from(format!("{ts} abc https://music.youtube.com")).digest().to_string();
         assert_eq!(digest, expect);
+    }
+
+    #[test]
+    fn matches_youtube_domains_exactly() {
+        for d in [".youtube.com", "youtube.com", "music.youtube.com", ".music.youtube.com"] {
+            assert!(is_youtube_domain(d), "{d}");
+        }
+        for d in ["notyoutube.com", ".youtube.com.evil.io", "youtube.co", ""] {
+            assert!(!is_youtube_domain(d), "{d}");
+        }
+    }
+
+    #[test]
+    fn sign_in_stays_on_google_and_youtube() {
+        for h in [
+            "accounts.google.com",
+            "Accounts.Google.com",
+            "google.com",
+            "accounts.youtube.com",
+            "music.youtube.com",
+            "accounts.google.com.tr",
+            "accounts.google.co.uk",
+            "accounts.google.de",
+        ] {
+            assert!(is_sign_in_host(h), "{h}");
+        }
+        for h in [
+            "accounts.google.com.evil.io",
+            "evilgoogle.com",
+            "google.com.evil.io",
+            "accounts.google.evil",
+            "accounts.google.co.evil",
+            "login.example.com",
+            "",
+        ] {
+            assert!(!is_sign_in_host(h), "{h}");
+        }
     }
 
     #[test]

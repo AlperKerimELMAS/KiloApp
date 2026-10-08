@@ -38,6 +38,9 @@ impl Http {
             .tls_config(tls)
             .timeout_global(Some(Duration::from_secs(20)))
             .user_agent(USER_AGENT)
+            // Every request, and every redirect, is https: nothing Kilo
+            // fetches (or decodes) travels in the clear.
+            .https_only(true)
             .http_status_as_error(false)
             // ureq's default is 128 KB each way per pooled connection: 1.5 MB
             // measured. Requests are a few KB and bodies stream through.

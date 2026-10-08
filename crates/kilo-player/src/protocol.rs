@@ -37,6 +37,10 @@ pub enum Event {
     /// The "previous" media key or Control Center button.
     Previous,
     Error(String),
+    /// The helper is gone (quit, crashed or killed). Delivered last, by the
+    /// host itself once the helper's output ends: never sent by the helper,
+    /// so nothing the helper's page says can fake it.
+    Exited,
 }
 
 /// Where playback is. The app extrapolates from this while playing instead
@@ -115,6 +119,7 @@ impl Event {
             Event::Next => "next".into(),
             Event::Previous => "previous".into(),
             Event::Error(msg) => format!("error {}", msg.replace('\n', " ")),
+            Event::Exited => "exited".into(),
         }
     }
 
@@ -122,10 +127,9 @@ impl Event {
         let (name, rest) = line.split_once(' ').unwrap_or((line, ""));
         let pos = || {
             let mut w = rest.split(' ');
-            let seconds = w.next()?.parse().ok()?;
-            let duration = w.next()?.parse().ok()?;
+            let (at, duration) = (seconds(w.next()?)?, seconds(w.next()?)?);
             let video = VideoId::parse(w.next()?)?;
-            Some(Position { seconds, duration, video })
+            Some(Position { seconds: at, duration, video })
         };
         Some(match name {
             "ready" => Event::Ready,
@@ -172,6 +176,8 @@ mod tests {
         ] {
             assert_eq!(Event::parse(&e.encode()), Some(e));
         }
+        // Only the host knows when the helper is gone.
+        assert_eq!(Event::parse(&Event::Exited.encode()), None);
     }
 
     #[test]
@@ -183,5 +189,7 @@ mod tests {
         assert_eq!(Command::parse("seek NaN"), None);
         assert_eq!(Command::parse("volume 101"), None);
         assert_eq!(Command::parse("play now"), None);
+        assert_eq!(Event::parse("playing NaN 200.00 lYBUbBu4W08"), None);
+        assert_eq!(Event::parse("paused 1.00 inf lYBUbBu4W08"), None);
     }
 }

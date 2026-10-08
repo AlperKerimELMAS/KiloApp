@@ -113,7 +113,8 @@ impl Bar {
     /// Sets the value (0–1) unless the user is dragging it.
     pub fn set_value(&self, v: f64) {
         if !self.ivars().dragging.get() {
-            self.ivars().value.set(v.clamp(0.0, 1.0));
+            // Never NaN: Core Animation throws on a NaN frame.
+            self.ivars().value.set(if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
             self.relayout();
         }
     }

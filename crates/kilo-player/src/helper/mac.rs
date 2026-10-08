@@ -149,13 +149,16 @@ define_class!(
         ) {
             // SAFETY: WebKit passes live objects on the main thread.
             let allowed = unsafe {
-                let main_frame = action.targetFrame().is_some_and(|f| f.isMainFrame());
-                let url = action.request().URL();
-                !main_frame
-                    || url.is_some_and(|u| {
+                match action.targetFrame() {
+                    // A new window: there are none.
+                    None => false,
+                    // The page's own frames (the player needs them).
+                    Some(frame) if !frame.isMainFrame() => true,
+                    Some(_) => action.request().URL().is_some_and(|u| {
                         u.scheme().is_some_and(|s| s.to_string() == "https")
                             && u.host().is_some_and(|h| ALLOWED_HOSTS.contains(&h.to_string().as_str()))
-                    })
+                    }),
+                }
             };
             decision.call((if allowed { WKNavigationActionPolicy::Allow } else { WKNavigationActionPolicy::Cancel },));
         }
@@ -359,13 +362,15 @@ fn on_page_message(msg: &str) {
             js("__kilo.pause()");
             emit(&Event::AdShowing);
         }
-        "error" => emit(&Event::Error(rest.to_owned())),
+        // Page text: marked as such, and short.
+        "error" => emit(&Event::Error(format!("page: {}", rest.chars().take(200).collect::<String>()))),
         "next" => emit(&Event::Next),
         "previous" => emit(&Event::Previous),
         "playing" | "paused" | "buffering" | "ended" => {
+            // Only well-formed reports: finite, non-negative times.
+            let time = |s: Option<&str>| s.and_then(|s| s.parse::<f64>().ok()).filter(|t| t.is_finite() && *t >= 0.0);
             let mut w = rest.split(' ');
-            let seconds = w.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-            let duration = w.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            let (Some(seconds), Some(duration)) = (time(w.next()), time(w.next())) else { return };
             let video = w.next().and_then(VideoId::parse);
             let expected = with(|h| h.expected.clone());
             let Some(video) = video.filter(|v| Some(v) == expected.as_ref()) else {
@@ -416,10 +421,16 @@ fn check_signed_in(config: &WKWebViewConfiguration, then: impl Fn(bool) + 'stati
     let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
         // SAFETY: WebKit passes a valid array for the duration of the call.
         let cookies = unsafe { cookies.as_ref() };
-        then(cookies.iter().any(|c| c.name().to_string() == "__Secure-3PAPISID" && c.domain().to_string().ends_with("youtube.com")));
+        then(cookies.iter().any(|c| c.name().to_string() == "__Secure-3PAPISID" && is_youtube_domain(&c.domain().to_string())));
     });
     // SAFETY: main-thread WebKit calls.
     unsafe { config.websiteDataStore().httpCookieStore().getAllCookies(&done) };
+}
+
+/// youtube.com or a subdomain of it (`kilo_core::auth::is_youtube_domain`).
+fn is_youtube_domain(domain: &str) -> bool {
+    let domain = domain.strip_prefix('.').unwrap_or(domain);
+    domain.strip_suffix("youtube.com").is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
 }
 
 fn emit(event: &Event) {

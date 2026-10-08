@@ -227,6 +227,10 @@ pub fn install_menu(mtm: MainThreadMarker) {
     let app_menu = menu("Kilo", mtm);
     add(&app_menu, "About Kilo", Some(sel!(orderFrontStandardAboutPanel:)), "", None, mtm);
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
+    let sign_out = add(&app_menu, "Sign Out", Some(sel!(signOut:)), "", None, mtm);
+    // SAFETY: the target lives for the whole app.
+    unsafe { sign_out.setTarget(Some(target)) };
+    app_menu.addItem(&NSMenuItem::separatorItem(mtm));
     add(&app_menu, "Hide Kilo", Some(sel!(hide:)), "h", None, mtm);
     add(
         &app_menu,

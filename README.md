@@ -49,11 +49,15 @@ The Rust toolchain is pinned in `rust-toolchain.toml`; rustup installs it.
 
 The app is signed ad hoc, which is enough to run it on the Mac that built it.
 
-## Privacy
+## Privacy and security
 
 - You sign in on Google's own page, in a system web view. Kilo never sees
   your password.
 - Kilo talks only to YouTube and Google. There's no telemetry.
+- **Sign Out** (in the Kilo menu) deletes your session and everything Kilo
+  stored.
+- How Kilo protects your account, its known limitations, and how to report
+  a vulnerability: [`SECURITY.md`](SECURITY.md).
 - On disk: WebKit's cookie store for Kilo (your session,
   `~/Library/HTTPStorages/io.github.alperkerimelmas.kilo.binarycookies`),
   music.youtube.com's page config

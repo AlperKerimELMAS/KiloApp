@@ -10,7 +10,10 @@ cp target/release/Kilo "$APP/Contents/MacOS/Kilo"
 cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
 cp packaging/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Ad-hoc signature: enough to run locally. Distribution needs a Developer ID.
-codesign --force --sign - "$APP"
+# The hardened runtime keeps other programs from injecting code into Kilo
+# (DYLD_* variables, unsigned libraries) or attaching to it to read the
+# session out of its memory. Kilo needs none of its exceptions.
+codesign --force --options runtime --sign - "$APP"
 if [ "${1:-}" = "--install" ]; then
     rm -rf /Applications/Kilo.app
     cp -R "$APP" /Applications/Kilo.app

@@ -42,7 +42,7 @@ use objc2_foundation::{NSNotification, NSNotificationCenter, NSTimer};
 pub use browse::{Route, activate, back, go, reload, scroll_to};
 pub use player::{next, play_pause, previous, seek, set_volume};
 pub use queue::{play_all, play_music_video, play_video};
-pub use session::sign_in;
+pub use session::{sign_in, sign_out};
 
 use crate::ui::page::{Items, PageView};
 use crate::ui::shell::{self, Shell};
@@ -90,7 +90,11 @@ struct App {
     /// An idle shutdown is counting down.
     idle_armed: bool,
     timer: Option<Retained<NSTimer>>,
-    signing_in: bool,
+    /// Bumped on sign-out, so a connection still being made with the old
+    /// session is dropped.
+    session: u64,
+    /// Signing in or out is under way.
+    account_busy: bool,
     _observers: Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
 }
 
@@ -222,7 +226,8 @@ fn launch() {
         idle_token: 0,
         idle_armed: false,
         timer: None,
-        signing_in: false,
+        session: 0,
+        account_busy: false,
         _observers: observers,
     }));
     open_window();

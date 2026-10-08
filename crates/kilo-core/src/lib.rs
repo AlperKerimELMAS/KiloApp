@@ -5,6 +5,7 @@
 pub mod auth;
 pub mod client;
 pub mod http;
+pub mod image;
 pub mod model;
 pub mod parse;
 pub mod queue;

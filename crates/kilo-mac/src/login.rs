@@ -1,9 +1,14 @@
-//! `--login-helper`: a window with Google's own sign-in page in a system web
-//! view. Kilo never sees the password. Once YouTube Music shows the user as
-//! signed in, the helper prints the YouTube cookies (one per line) for the
-//! app and exits; WebKit keeps them in its store for the player helper too.
+//! The account's web data, in helpers so the app itself never loads WebKit.
 //!
-//! The app reads that output with `parse_output`.
+//! `--login-helper`: a window with Google's own sign-in page in a system web
+//! view. Kilo never sees the password. The window has no address bar, so it
+//! only shows Google's and YouTube's pages, over https, and names the page's
+//! host in its title bar; any other link opens in the browser. Once YouTube
+//! Music shows the user as signed in, the helper prints the YouTube cookies
+//! (one per line) for the app and exits; WebKit keeps them in its store for
+//! the player helper too. The app reads that output with `parse_output`.
+//!
+//! `--sign-out-helper`: deletes everything WebKit stores for Kilo.
 
 use std::cell::Cell;
 use std::io::Write;
@@ -11,13 +16,17 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 
 use block2::RcBlock;
-use kilo_core::auth::Cookie;
+use kilo_core::auth::{Cookie, is_sign_in_host, is_youtube_domain};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowDelegate, NSWindowStyleMask};
-use objc2_foundation::{NSArray, NSHTTPCookie, NSNotification, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest};
-use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
+};
+use objc2_foundation::{NSArray, NSDate, NSHTTPCookie, NSNotification, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest};
+use objc2_web_kit::{
+    WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView, WKWebViewConfiguration, WKWebsiteDataStore,
+};
 
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
 
@@ -26,22 +35,71 @@ const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&
 const SAFARI_APP_NAME: &str = "Version/27.0.1 Safari/605.1.15";
 
 define_class!(
-    // SAFETY: NSObject has no subclassing requirements; no ivars, no Drop.
+    // SAFETY: NSObject has no subclassing requirements; no ivars, no Drop;
+    // methods match the delegate protocols' signatures.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "KiloLoginWindowDelegate"]
-    struct WindowDelegate;
+    #[name = "KiloLoginDelegate"]
+    struct Delegate;
 
-    unsafe impl NSObjectProtocol for WindowDelegate {}
+    unsafe impl NSObjectProtocol for Delegate {}
 
-    unsafe impl NSWindowDelegate for WindowDelegate {
+    unsafe impl NSWindowDelegate for Delegate {
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             // Closed without signing in.
             std::process::exit(1);
         }
     }
+
+    unsafe impl WKNavigationDelegate for Delegate {
+        #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
+        fn decide(
+            &self,
+            _web_view: &WKWebView,
+            action: &WKNavigationAction,
+            decision: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>,
+        ) {
+            // SAFETY: WebKit passes live objects on the main thread.
+            let (frame, url) = unsafe { (action.targetFrame(), action.request().URL()) };
+            let (scheme, host) = url.as_deref().map(scheme_and_host).unwrap_or_default();
+            let allowed = match frame {
+                // The sign-in page's own frames (reCAPTCHA, say).
+                // SAFETY: a live frame, on the main thread.
+                Some(f) if !unsafe { f.isMainFrame() } => true,
+                Some(_) => scheme == "https" && is_sign_in_host(&host),
+                // A new window: there are none.
+                None => false,
+            };
+            if !allowed
+                && matches!(scheme.as_str(), "https" | "http")
+                && let Some(url) = &url
+            {
+                // Somewhere else (a help link, say): the browser shows it,
+                // with its address bar.
+                NSWorkspace::sharedWorkspace().openURL(url);
+            }
+            crate::debug::trace(|| format!("sign-in: {} {scheme}://{host}", if allowed { "show" } else { "refuse" }));
+            decision.call((if allowed { WKNavigationActionPolicy::Allow } else { WKNavigationActionPolicy::Cancel },));
+        }
+
+        #[unsafe(method(webView:didCommitNavigation:))]
+        fn did_commit(&self, web_view: &WKWebView, _navigation: Option<&WKNavigation>) {
+            // No address bar: the title bar says whose page this is.
+            // SAFETY: WebKit passes a live web view on the main thread.
+            let host = unsafe { web_view.URL() }.as_deref().map(scheme_and_host).unwrap_or_default().1;
+            if let Some(window) = web_view.window() {
+                window.setSubtitle(&NSString::from_str(&host));
+            }
+        }
+    }
 );
+
+/// A URL's scheme and host, lowercased ("" where it has none).
+fn scheme_and_host(url: &NSURL) -> (String, String) {
+    let lower = |s: Option<Retained<NSString>>| s.map(|s| s.to_string().to_ascii_lowercase()).unwrap_or_default();
+    (lower(url.scheme()), lower(url.host()))
+}
 
 pub fn run() -> ! {
     let mtm = MainThreadMarker::new().expect("main thread");
@@ -64,8 +122,10 @@ pub fn run() -> ! {
         window.setReleasedWhenClosed(false);
         window.setTitle(&NSString::from_str("Sign in to YouTube Music"));
         window.setContentView(Some(&web_view));
-        let delegate: Retained<WindowDelegate> = msg_send![WindowDelegate::alloc(mtm), init];
+        let delegate: Retained<Delegate> = msg_send![Delegate::alloc(mtm), init];
         window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        // Held weakly by WebKit; `_keep` below holds it.
+        web_view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         window.center();
         window.makeKeyAndOrderFront(None);
         app.activate();
@@ -112,7 +172,7 @@ fn check_signed_in(web_view: &WKWebView, then: impl Fn(bool) + 'static) {
     let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
         // SAFETY: WebKit passes a valid array for the duration of the call.
         let cookies = unsafe { cookies.as_ref() };
-        then(cookies.iter().any(|c| c.name().to_string() == "__Secure-3PAPISID" && c.domain().to_string().ends_with("youtube.com")));
+        then(cookies.iter().any(|c| c.name().to_string() == "__Secure-3PAPISID" && is_youtube_domain(&c.domain().to_string())));
     });
     // SAFETY: main-thread WebKit calls.
     unsafe { web_view.configuration().websiteDataStore().httpCookieStore().getAllCookies(&done) };
@@ -125,7 +185,7 @@ fn report_cookies_and_exit(web_view: &WKWebView) {
         let mut out = std::io::stdout().lock();
         for c in cookies.iter() {
             let domain = c.domain().to_string();
-            if !domain.ends_with("youtube.com") {
+            if !is_youtube_domain(&domain) {
                 continue;
             }
             let cookie = Cookie {
@@ -142,6 +202,29 @@ fn report_cookies_and_exit(web_view: &WKWebView) {
     });
     // SAFETY: main-thread WebKit calls.
     unsafe { web_view.configuration().websiteDataStore().httpCookieStore().getAllCookies(&done) };
+}
+
+/// `--sign-out-helper`: deletes everything WebKit stores for Kilo (cookies,
+/// so the session, and every site's caches and storage), then exits: 0 once
+/// it's done, 1 if WebKit didn't finish within 15 s.
+pub fn sign_out() -> ! {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let done = RcBlock::new(|| std::process::exit(0));
+    // SAFETY: main-thread WebKit calls; the block outlives the call.
+    unsafe {
+        let store = WKWebsiteDataStore::defaultDataStore(mtm);
+        store.removeDataOfTypes_modifiedSince_completionHandler(
+            &WKWebsiteDataStore::allWebsiteDataTypes(mtm),
+            &NSDate::distantPast(),
+            &done,
+        );
+    }
+    let when = dispatch2::DispatchTime::NOW.time(15_000_000_000);
+    let _ = dispatch2::DispatchQueue::main().after(when, || std::process::exit(1));
+    app.run();
+    std::process::exit(1)
 }
 
 /// One line of the helper's output: `cookie⇥domain⇥name⇥value⇥expires`.

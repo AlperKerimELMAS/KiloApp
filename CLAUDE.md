@@ -20,6 +20,10 @@ architecture, the status and the next steps. Details and measurements are in
   only if it measurably wins.
 - **Ask the owner first** before touching their data (cookie stores),
   pushing or publishing, or anything sensitive under YouTube's ToS.
+- **Keep the security boundaries** (`SECURITY.md`): the sign-in window and
+  the player only show allowlisted https hosts, images pass
+  `kilo_core::image` before ImageIO, page messages are validated, and
+  `bundle.sh` signs with the hardened runtime.
 
 ## Layout
 
@@ -27,7 +31,7 @@ architecture, the status and the next steps. Details and measurements are in
 |---|---|
 | `crates/kilo-core` | Portable: HTTP on the OS's TLS, auth from WebKit's cookie file, YouTube Music web API client, lean serde parsers, models, queue |
 | `crates/kilo-player` | The player helper (WKWebView on macOS) and its one-line text protocol; `examples/session.rs` is a scripted, measured session |
-| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper` and `--login-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in |
+| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in |
 | `crates/kilo-probe` | Measures footprint and CPU like the OS task managers, over the process tree plus the XPC services macOS charges to the app |
 | `crates/kilo-spike-web`, `crates/kilo-ui-bench` | Measurement labs |
 
@@ -77,6 +81,9 @@ tested.
 - **macOS 27 quits an idle helper itself** ("quiet safe quit", SIGTERM) a
   few minutes after playback stops, before or after Kilo's own 5-minute
   idle shutdown. Both are fine: the next play starts a fresh helper.
+- **Test sign-in and sign-out in a copy with another bundle id** (see
+  `docs/HANDOFF.md`, section 6). The real app's helpers use the owner's
+  session.
 - **`app::with` silently skips when the state is already borrowed.** Don't
   call AppKit methods that can run the event loop (like `NSWindow.close`)
   inside it.

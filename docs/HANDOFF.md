@@ -6,7 +6,7 @@ session). For depth:
 - `docs/PLAN.md`: design and every measurement.
 - `docs/COMPARISON.md`: the measured comparison with Chrome.
 
-**Last updated:** 2026-10-08 (license, cleanup before publishing) · **Version:** 0.2 ·
+**Last updated:** 2026-10-08 (security review) · **Version:** 0.2 ·
 **Branch:** `main` (no remote yet)
 
 ---
@@ -138,14 +138,41 @@ Spotifast, a native Rust Spotify client that claims 100–250 MB.
      Previous/seek work after the idle shutdown; the helper's guard against
      unrequested videos no longer pauses the next track on a stale event;
      quitting the helper after an ad or sign-out no longer blocks the UI.
+9. **Security review (2026-10-08).** Threat model: the user's Google session,
+   their Mac, their privacy. Summary in `SECURITY.md`. Fixed:
+   - **Sign-in window:** no address bar, so main-frame pages are limited to
+     https Google/YouTube hosts (`kilo_core::auth::is_sign_in_host`; other
+     links open in the browser) and the title bar shows the host.
+   - **Sign Out** (Kilo menu): stops the helper, `--sign-out-helper` empties
+     WebKit's stores, then `paths::remove_own_data` deletes WebKit's
+     leftovers (its API keeps tracking-prevention records), the config and
+     the caches.
+   - **Player page:** can't fake the helper exiting (typed `Event::Exited`,
+     which `Event::parse` never returns); its times must be finite (a NaN
+     could crash Core Animation); its error text is capped and labelled;
+     new windows are refused.
+   - **Images:** decoded only from Google's CDNs over https, and only JPEG,
+     PNG or WebP by their bytes (`kilo_core::image`), cache included.
+   - **HTTP:** https only, redirects included (ureq already drops cookies
+     and authorization on redirects).
+   - Exact cookie-domain checks (`notyoutube.com` used to pass), the
+     hardened runtime (`bundle.sh`), no `/tmp` fallback for the home
+     folder, paths from the running bundle id, CI with read-only
+     permissions and pinned actions.
+   - Checked and fine: dependencies (RustSec, 90 crates, 0 advisories),
+     input validation into URLs and scripts, response size caps, unsafe
+     code, file permissions (`~/Library` is 0700).
+   - Measured unchanged: idle on a fixed playlist page 30.6 MB (before:
+     31.4 MB; noise about ±1.5 MB), playing 144.5 MB.
 
 ## 4. Architecture
 
 ```
-Kilo.app/Contents/MacOS/Kilo  (one binary, three roles)
+Kilo.app/Contents/MacOS/Kilo  (one binary, four roles)
 ├─ (no args)          the app: native AppKit UI, never loads WebKit
 ├─ --player-helper    hidden WKWebView running m.youtube.com's player (kilo-player)
-└─ --login-helper     visible WKWebView with Google's sign-in page (kilo-mac/login.rs)
+├─ --login-helper     visible WKWebView with Google's sign-in page (kilo-mac/login.rs)
+└─ --sign-out-helper  empties WebKit's stores for Kilo, then exits (kilo-mac/login.rs)
 ```
 
 | Crate | Role |
@@ -171,7 +198,7 @@ cargo fmt --all -- --check               # rustfmt.toml: width 140
 cargo clippy --release --workspace --all-targets -- -D warnings
 cargo clippy --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 cargo clippy --release -p kilo-probe -p kilo-player --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
-cargo test --workspace                    # 17 tests
+cargo test --workspace                    # 22 tests
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown [--csv f.csv]
 ```
 
@@ -225,14 +252,22 @@ loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
    of `NSTextField`s (about 6 KB and 9 constraints each, maybe 1 MB in all;
    bench the layer cost first). Consider shutting the helper down sooner
    while paused with the window closed (owner's call: resume then takes 2 s).
-3. **Session hardening:**
+3. **Session hardening** (the biggest remaining risk, `SECURITY.md`):
    - **Delete the development copies of the session** in
-     `~/Library/HTTPStorages/kilo-spike-web*` and
-     `~/Library/WebKit/kilo-spike-web`, **only with the owner's OK.**
-   - Add **Sign out**, which clears Kilo's WebKit data.
-   - Consider storing the session in the Keychain and keeping only
-     youtube.com cookies. Today WebKit's file holds the full Google session
-     unencrypted, in a folder only the user can read.
+     `~/Library/HTTPStorages/kilo-spike-web*` (two non-empty `_tmp_` copies
+     too) and `~/Library/WebKit/kilo-spike-web`, **only with the owner's
+     OK.**
+   - WebKit's file holds the full Google session unencrypted; any process
+     running as the user can read it. Next: keep only youtube.com cookies
+     after sign-in, then protect them (Keychain, or the App Sandbox, whose
+     containers macOS 14+ shields from other apps). Needs a real sign-in to
+     test, and a check that YouTube's cookie rotation still works over days.
+   - Lockdown Mode for the sign-in window (untested with Google's sign-in).
+   - **Testing sign-in or sign-out without touching the owner's session:**
+     copy `dist/Kilo.app`, give the copy another `CFBundleIdentifier`
+     (`plutil -replace`), re-sign it, and run its helpers. WebKit and
+     `paths` key everything by the bundle id. Delete the copy's
+     `~/Library/{WebKit,Caches,HTTPStorages}/<id>*` afterwards.
 4. **Before publishing:**
    - Licensed MIT (`LICENSE`, 2026-10-08); personal details are out of the
      docs.

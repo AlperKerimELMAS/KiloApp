@@ -1,7 +1,8 @@
-//! Kilo for macOS. One executable, three roles:
+//! Kilo for macOS. One executable, four roles:
 //! - no arguments: the app (native AppKit UI, never loads a web engine);
 //! - `--player-helper`: YouTube's player in a hidden web view (kilo-player);
-//! - `--login-helper`: a Google sign-in window, exits once signed in.
+//! - `--login-helper`: a Google sign-in window, exits once signed in;
+//! - `--sign-out-helper`: deletes Kilo's web data (the session), then exits.
 
 #[cfg(target_os = "macos")]
 mod app;
@@ -24,6 +25,7 @@ fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--player-helper") => kilo_player::run_helper(),
         Some("--login-helper") => login::run(),
+        Some("--sign-out-helper") => login::sign_out(),
         _ => app::run(),
     }
 }

@@ -14,6 +14,7 @@ use std::ptr::NonNull;
 use std::sync::OnceLock;
 
 use kilo_core::http::Http;
+use kilo_core::image;
 use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFBoolean, CFData, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColorSpace, CGContext, CGImage, kCGColorSpaceSRGB};
@@ -205,15 +206,24 @@ fn cache_file(url: &str) -> PathBuf {
     paths::image_cache().join(format!("{hash:016x}"))
 }
 
+/// The image at `url`, from the disk cache or the network. Only images from
+/// Google's servers, in a thumbnail format, get past here
+/// (`kilo_core::image`), so ImageIO never decodes anything else.
 fn fetch(url: &str) -> Option<Vec<u8>> {
+    if !image::trusted_url(url) {
+        crate::debug::trace(|| format!("images: refused {url}"));
+        return None;
+    }
     let file = cache_file(url);
-    if let Ok(bytes) = std::fs::read(&file) {
+    if let Ok(bytes) = std::fs::read(&file)
+        && image::known_format(&bytes)
+    {
         return Some(bytes);
     }
-    let bytes = http().get(url, &[]).ok().or_else(|| {
+    let get = |url: &str| http().get(url, &[]).ok().filter(|b| image::known_format(b));
+    let bytes = get(url).or_else(|| {
         // Not every video has WebP thumbnails; the JPEG always exists.
-        let jpeg = format!("{}.jpg", url.strip_suffix(".webp")?.replacen("/vi_webp/", "/vi/", 1));
-        http().get(&jpeg, &[]).ok()
+        get(&format!("{}.jpg", url.strip_suffix(".webp")?.replacen("/vi_webp/", "/vi/", 1)))
     })?;
     if std::fs::create_dir_all(paths::image_cache()).is_ok() {
         let _ = std::fs::write(&file, &bytes);

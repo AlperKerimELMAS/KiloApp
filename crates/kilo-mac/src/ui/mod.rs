@@ -408,6 +408,11 @@ define_class!(
             app::sign_in();
         }
 
+        #[unsafe(method(signOut:))]
+        fn sign_out(&self, _sender: Option<&AnyObject>) {
+            app::sign_out();
+        }
+
         #[unsafe(method(retry:))]
         fn retry(&self, _sender: Option<&AnyObject>) {
             app::reload();

@@ -8,7 +8,7 @@ use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchTime};
 use kilo_core::model::Entry;
 use kilo_core::parse;
-use kilo_player::host::{self, PlayerProcess};
+use kilo_player::host::PlayerProcess;
 use kilo_player::protocol::{Command, Event, VideoId};
 use objc2_app_kit::NSWindowOcclusionState;
 use objc2_foundation::{NSString, NSTimer};
@@ -229,7 +229,7 @@ fn on_player_event(serial: u64, event: Event) {
             stop_helper();
             show_status("Playback needs a YouTube Music Premium account.");
         }
-        Event::Error(msg) if msg == host::EXITED => {
+        Event::Exited => {
             // Quit, crashed, or shut down (by us when idle, or by macOS 27
             // itself, which quits an idle helper with SIGTERM, "quiet safe
             // quit"). Either way the next play starts a fresh one.
@@ -331,6 +331,19 @@ pub(super) fn restore_bar() {
         show_now_playing(&entry);
         update_progress();
     }
+}
+
+/// The player bar with nothing to play (after signing out).
+pub(super) fn clear_bar() {
+    with_shell(|s| {
+        s.bar.title.setStringValue(&NSString::from_str("Nothing playing"));
+        s.bar.artist.setStringValue(&NSString::from_str(""));
+        s.bar.time.setStringValue(&NSString::from_str(""));
+        s.bar.progress.set_value(0.0);
+        s.bar.progress.set_enabled(false);
+        ui::set_symbol(&s.bar.play, "play.fill");
+        ui::set_image(&s.bar.art, None);
+    });
 }
 
 fn show_now_playing(entry: &Entry) {
