@@ -58,10 +58,14 @@ pub fn remove_own_data() {
     let _ = std::fs::remove_file(config());
     let _ = std::fs::remove_dir_all(caches());
     let _ = std::fs::remove_dir_all(webkit());
+    let _ = std::fs::remove_file(cookies());
+    remove_cookie_copies();
+}
+
+/// Deletes the old copies of the cookie file WebKit leaves behind (it saves
+/// the file through `<file>_tmp_<pid>.dat` copies).
+pub fn remove_cookie_copies() {
     let cookies = cookies();
-    let _ = std::fs::remove_file(&cookies);
-    // WebKit saves the cookie file through `<file>_tmp_<pid>.dat` copies,
-    // and leaves some behind.
     let (Some(dir), Some(name)) = (cookies.parent(), cookies.file_name().and_then(|n| n.to_str())) else { return };
     let copy = format!("{name}_tmp_");
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {

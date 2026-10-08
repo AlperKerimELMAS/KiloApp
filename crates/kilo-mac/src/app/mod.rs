@@ -235,10 +235,7 @@ fn launch() {
         NSApplication::sharedApplication(mtm).activate();
     }
 
-    match session::saved_session() {
-        Some(session) => session::start(session),
-        None => show_sign_in(),
-    }
+    session::resume();
 }
 
 /// Builds the window and brings it up to date with the app's state (but

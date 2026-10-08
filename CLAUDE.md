@@ -31,7 +31,7 @@ architecture, the status and the next steps. Details and measurements are in
 |---|---|
 | `crates/kilo-core` | Portable: HTTP on the OS's TLS, auth from WebKit's cookie file, YouTube Music web API client, lean serde parsers, models, queue |
 | `crates/kilo-player` | The player helper (WKWebView on macOS) and its one-line text protocol; `examples/session.rs` is a scripted, measured session |
-| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in |
+| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper`, `--login-helper`, `--prune-helper` and `--sign-out-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in |
 | `crates/kilo-probe` | Measures footprint and CPU like the OS task managers, over the process tree plus the XPC services macOS charges to the app |
 | `crates/kilo-spike-web`, `crates/kilo-ui-bench` | Measurement labs |
 
@@ -81,6 +81,12 @@ tested.
 - **macOS 27 quits an idle helper itself** ("quiet safe quit", SIGTERM) a
   few minutes after playback stops, before or after Kilo's own 5-minute
   idle shutdown. Both are fine: the next play starts a fresh helper.
+- **WebKit writes cookies to its file only when its process exits.** A
+  helper that sets cookies must exit before anyone reads the file
+  (`login::wait_until_saved`).
+- **Only YouTube's cookies are ever stored.** The sign-in window's store is
+  in memory; never give it (or the player) a persistent store that could
+  keep Google's account session.
 - **Test sign-in and sign-out in a copy with another bundle id** (see
   `docs/HANDOFF.md`, section 6). The real app's helpers use the owner's
   session.

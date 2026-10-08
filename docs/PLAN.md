@@ -291,13 +291,14 @@ SetStoreUpdateService (2.1 MB), as Activity Monitor would.
 As built (the crates are described in `docs/HANDOFF.md`, section 4):
 
 ```
-Kilo (one binary, four roles)
+Kilo (one binary, five roles)
 ├─ the app (no arguments): native UI on the main thread, network and image
 │  decoding on two small worker pools; never loads WebKit
 ├─ --player-helper: hidden web view running YouTube's own player, driven by
 │  one-line text messages over stdin/stdout; started on play, shut down
 │  after 5 minutes paused, which frees all of WebKit
 ├─ --login-helper: a visible web view for Google sign-in, then exits
+├─ --prune-helper: deletes WebKit's data for Kilo except YouTube's
 └─ --sign-out-helper: empties WebKit's stores for Kilo, then exits
 ```
 

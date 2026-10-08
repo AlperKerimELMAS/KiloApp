@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use kilo_core::auth::{Session, parse_binary_cookies};
+use kilo_core::auth::{Session, is_youtube_domain, parse_binary_cookies};
 use kilo_core::client::{Client, Config};
 use kilo_core::http::Http;
 use kilo_core::queue::Queue;
@@ -12,6 +12,34 @@ use kilo_core::queue::Queue;
 use super::browse::{Route, go};
 use super::{message, player, show_error, show_loading, show_sign_in, with, with_shell};
 use crate::{images, login, net, paths};
+
+/// At launch: connects with the saved session. If an older Kilo kept
+/// Google's account cookies next to YouTube's, the prune helper deletes
+/// them first.
+pub(super) fn resume() {
+    let saved = std::fs::read(paths::cookies()).ok().and_then(|data| parse_binary_cookies(&data));
+    let Some((cookies, session)) = saved.and_then(|c| Session::from_cookies(&c).map(|s| (c, s))) else { return show_sign_in() };
+    if cookies.iter().all(|c| is_youtube_domain(&c.domain)) {
+        return start(session);
+    }
+    let Some(id) = with(|a| a.session) else { return };
+    show_loading();
+    let exe = std::env::current_exe().ok();
+    net::run(
+        net::Pool::Api,
+        move || {
+            let pruned = exe.is_some_and(|exe| std::process::Command::new(exe).arg("--prune-helper").status().is_ok_and(|s| s.success()));
+            paths::remove_cookie_copies();
+            pruned
+        },
+        move |pruned| {
+            crate::debug::trace(|| format!("session: Google's account cookies {}", if pruned { "deleted" } else { "NOT deleted" }));
+            if with(|a| a.session) == Some(id) {
+                start(session);
+            }
+        },
+    );
+}
 
 /// The session WebKit stored the last time the user signed in.
 pub(super) fn saved_session() -> Option<Session> {
@@ -67,7 +95,9 @@ pub fn sign_in() {
         net::Pool::Api,
         move || {
             let out = std::process::Command::new(exe?).arg("--login-helper").output().ok()?;
-            Some(login::parse_output(&String::from_utf8_lossy(&out.stdout)))
+            let cookies = login::parse_output(&String::from_utf8_lossy(&out.stdout));
+            login::wait_until_saved(&cookies);
+            Some(cookies)
         },
         |cookies| {
             with(|a| a.account_busy = false);

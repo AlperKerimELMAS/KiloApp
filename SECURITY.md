@@ -20,9 +20,13 @@ YouTube's pages, over https, and names the page's host in its title bar.
 Any other link opens in your browser, where you can see where it goes.
 
 **Your session.**
-- Kilo sends it only to music.youtube.com, over TLS that macOS verifies.
-  Every request, and every redirect, must be https; redirects never carry
-  the session along.
+- Signing in creates your whole Google account session. Kilo keeps it in the
+  sign-in window's memory only, and it ends with that window. Kilo stores
+  only YouTube's cookies, which is all it needs. (Older versions stored the
+  whole session; Kilo deletes the rest at launch.)
+- Kilo sends the session only to music.youtube.com, over TLS that macOS
+  verifies. Every request, and every redirect, must be https; redirects
+  never carry the session along.
 - Thumbnails are downloaded without it.
 - **Sign Out** (in the Kilo menu) deletes everything WebKit stores for Kilo
   (the session, site data, caches) and every file Kilo writes.
@@ -47,15 +51,15 @@ Any other link opens in your browser, where you can see where it goes.
 
 ## Known limitations
 
-- **The session is stored unencrypted.** WebKit keeps it in its cookie file,
+- **The YouTube session is stored unencrypted.** WebKit keeps it in its
+  cookie file,
   `~/Library/HTTPStorages/io.github.alperkerimelmas.kilo.binarycookies`.
   Other accounts on the Mac can't reach it, but any program running as you
-  can read it. (Chrome encrypts its cookies with a key in the Keychain;
-  Safari keeps them in a container macOS protects.)
-- **That file holds the whole Google session** that signing in created,
-  though Kilo only needs its YouTube part.
+  can read it, and with it act on your YouTube account. (Your Google account
+  session isn't in it.) Chrome encrypts its cookies with a key in the Keychain;
+  Safari keeps them in a container macOS protects. Both rely on the app
+  having a stable code signature, which ad-hoc builds don't: each build
+  would have to ask for your Mac password to read the session. Encrypting
+  it comes with Developer ID signing.
 - Builds are signed ad hoc, not with a Developer ID, and aren't notarized.
   Build Kilo yourself, or only run a build you trust.
-
-Fixing the first two (keeping only YouTube's cookies, protected by the
-Keychain or the App Sandbox) is planned.

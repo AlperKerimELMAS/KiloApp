@@ -164,14 +164,26 @@ Spotifast, a native Rust Spotify client that claims 100–250 MB.
      code, file permissions (`~/Library` is 0700).
    - Measured unchanged: idle on a fixed playlist page 30.6 MB (before:
      31.4 MB; noise about ±1.5 MB), playing 144.5 MB.
+   - **Only YouTube's cookies are stored.** The sign-in window uses a
+     non-persistent WebKit store, so Google's account session (Gmail,
+     Drive…) never touches the disk; once signed in, `keep_youtube_cookies`
+     copies YouTube's cookies into WebKit's store for the player. Stores
+     from older versions are pruned at launch (`--prune-helper`, then
+     `paths::remove_cookie_copies`). The owner's store went from 30 Google
+     + 20 YouTube cookies to 20 YouTube ones; browsing, Premium playback
+     and the song-version swap all work with YouTube's cookies alone.
+   - The development copies of the session (`kilo-spike-web`) are deleted;
+     the spike and the dev `KiloPlayer.app` need `kilo-spike-web login`
+     again.
 
 ## 4. Architecture
 
 ```
-Kilo.app/Contents/MacOS/Kilo  (one binary, four roles)
+Kilo.app/Contents/MacOS/Kilo  (one binary, five roles)
 ├─ (no args)          the app: native AppKit UI, never loads WebKit
 ├─ --player-helper    hidden WKWebView running m.youtube.com's player (kilo-player)
 ├─ --login-helper     visible WKWebView with Google's sign-in page (kilo-mac/login.rs)
+├─ --prune-helper     deletes WebKit's data for Kilo except YouTube's (kilo-mac/login.rs)
 └─ --sign-out-helper  empties WebKit's stores for Kilo, then exits (kilo-mac/login.rs)
 ```
 
@@ -252,16 +264,18 @@ loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
    of `NSTextField`s (about 6 KB and 9 constraints each, maybe 1 MB in all;
    bench the layer cost first). Consider shutting the helper down sooner
    while paused with the window closed (owner's call: resume then takes 2 s).
-3. **Session hardening** (the biggest remaining risk, `SECURITY.md`):
-   - **Delete the development copies of the session** in
-     `~/Library/HTTPStorages/kilo-spike-web*` (two non-empty `_tmp_` copies
-     too) and `~/Library/WebKit/kilo-spike-web`, **only with the owner's
-     OK.**
-   - WebKit's file holds the full Google session unencrypted; any process
-     running as the user can read it. Next: keep only youtube.com cookies
-     after sign-in, then protect them (Keychain, or the App Sandbox, whose
-     containers macOS 14+ shields from other apps). Needs a real sign-in to
-     test, and a check that YouTube's cookie rotation still works over days.
+3. **Session hardening** (`SECURITY.md`):
+   - **Watch:** the session now holds YouTube's cookies only (2026-10-08).
+     If YouTube can't refresh it without Google's account cookies, Kilo
+     will show its sign-in screen after some days; then keeping the
+     account cookies in memory isn't enough and this needs a rethink.
+   - **Untested end to end:** a fresh sign-in through the new flow (needs
+     the owner's password): Sign Out, Sign In, then play.
+   - WebKit's file holds the YouTube session unencrypted. Encrypting it
+     (Keychain, or the App Sandbox, whose containers macOS 14+ shields from
+     other apps) needs a stable code signature: with ad-hoc builds, every
+     build asks for the Mac password before it can read the session. Do it
+     with Developer ID signing (or a self-signed identity for development).
    - Lockdown Mode for the sign-in window (untested with Google's sign-in).
    - **Testing sign-in or sign-out without touching the owner's session:**
      copy `dist/Kilo.app`, give the copy another `CFBundleIdentifier`
@@ -289,4 +303,4 @@ loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
 - `dist/` is git-ignored.
 - `crates/kilo-spike-web` and the dev `KiloPlayer.app` (wrapping
   `target/release/examples/session`) share the `kilo-spike-web` cookie
-  store.
+  store, which was deleted on 2026-10-08: run `kilo-spike-web login` first.

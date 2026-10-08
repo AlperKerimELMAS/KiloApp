@@ -52,7 +52,8 @@ The app is signed ad hoc, which is enough to run it on the Mac that built it.
 ## Privacy and security
 
 - You sign in on Google's own page, in a system web view. Kilo never sees
-  your password.
+  your password, and stores only YouTube's cookies, not your Google account
+  session.
 - Kilo talks only to YouTube and Google. There's no telemetry.
 - **Sign Out** (in the Kilo menu) deletes your session and everything Kilo
   stored.

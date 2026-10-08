@@ -4,9 +4,14 @@
 //! view. Kilo never sees the password. The window has no address bar, so it
 //! only shows Google's and YouTube's pages, over https, and names the page's
 //! host in its title bar; any other link opens in the browser. Once YouTube
-//! Music shows the user as signed in, the helper prints the YouTube cookies
-//! (one per line) for the app and exits; WebKit keeps them in its store for
-//! the player helper too. The app reads that output with `parse_output`.
+//! Music shows the user as signed in, the helper copies YouTube's cookies,
+//! and only those, into WebKit's store for the player helper, prints them
+//! (one per line) for the app, and exits. The window keeps its cookies in
+//! memory, so Google's account session ends with it and never touches the
+//! disk. The app reads the output with `parse_output`.
+//!
+//! `--prune-helper`: deletes everything WebKit stores for Kilo except
+//! YouTube's (older versions kept the whole Google session).
 //!
 //! `--sign-out-helper`: deletes everything WebKit stores for Kilo.
 
@@ -16,7 +21,8 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 
 use block2::RcBlock;
-use kilo_core::auth::{Cookie, is_sign_in_host, is_youtube_domain};
+use dispatch2::{DispatchQueue, DispatchTime};
+use kilo_core::auth::{Cookie, is_sign_in_host, is_youtube_domain, parse_binary_cookies};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
@@ -25,7 +31,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSDate, NSHTTPCookie, NSNotification, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest};
 use objc2_web_kit::{
-    WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView, WKWebViewConfiguration, WKWebsiteDataStore,
+    WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView, WKWebViewConfiguration,
+    WKWebsiteDataRecord, WKWebsiteDataStore,
 };
 
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
@@ -109,6 +116,9 @@ pub fn run() -> ! {
     // SAFETY: main-thread AppKit/WebKit calls with valid arguments.
     let (window, web_view, delegate) = unsafe {
         let config = WKWebViewConfiguration::new(mtm);
+        // Signing in creates Google's whole account session: it stays in
+        // memory, and only YouTube's cookies are kept (`keep_youtube_cookies`).
+        config.setWebsiteDataStore(&WKWebsiteDataStore::nonPersistentDataStore(mtm));
         config.setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_APP_NAME)));
         let size = NSSize::new(480.0, 720.0);
         let web_view = WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), NSRect::new(NSPoint::ZERO, size), &config);
@@ -145,7 +155,7 @@ pub fn run() -> ! {
             // Let the redirect chain finish setting cookies, then report
             // (once: the helper exits when the cookies arrive).
             if ticks.get() >= at + 2 && !reported.replace(true) {
-                report_cookies_and_exit(&wv);
+                keep_youtube_cookies(&wv);
             }
             return;
         }
@@ -178,39 +188,106 @@ fn check_signed_in(web_view: &WKWebView, then: impl Fn(bool) + 'static) {
     unsafe { web_view.configuration().websiteDataStore().httpCookieStore().getAllCookies(&done) };
 }
 
-fn report_cookies_and_exit(web_view: &WKWebView) {
-    let done = RcBlock::new(|cookies: NonNull<NSArray<NSHTTPCookie>>| {
+/// Signed in: copies YouTube's cookies (with all their attributes) from the
+/// window's memory into WebKit's own store, where the player helper finds
+/// them, then reports them and exits.
+fn keep_youtube_cookies(web_view: &WKWebView) {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
         // SAFETY: as above.
         let cookies = unsafe { cookies.as_ref() };
-        let mut out = std::io::stdout().lock();
-        for c in cookies.iter() {
-            let domain = c.domain().to_string();
-            if !is_youtube_domain(&domain) {
-                continue;
-            }
-            let cookie = Cookie {
-                domain,
-                name: c.name().to_string(),
-                value: c.value().to_string(),
-                expires: c.expiresDate().map_or(0.0, |d| d.timeIntervalSince1970()),
-            };
-            let _ = writeln!(out, "{}", format_cookie(&cookie));
+        let youtube: Vec<Retained<NSHTTPCookie>> = cookies.iter().filter(|c| is_youtube_domain(&c.domain().to_string())).collect();
+        let report: Rc<Vec<Cookie>> = Rc::new(
+            youtube
+                .iter()
+                .map(|c| Cookie {
+                    domain: c.domain().to_string(),
+                    name: c.name().to_string(),
+                    value: c.value().to_string(),
+                    expires: c.expiresDate().map_or(0.0, |d| d.timeIntervalSince1970()),
+                })
+                .collect(),
+        );
+        // SAFETY: main-thread WebKit call.
+        let store = unsafe { WKWebsiteDataStore::defaultDataStore(mtm).httpCookieStore() };
+        let left = Rc::new(Cell::new(youtube.len()));
+        for cookie in &youtube {
+            let (left, report) = (left.clone(), report.clone());
+            let saved = RcBlock::new(move || {
+                left.set(left.get() - 1);
+                if left.get() == 0 {
+                    report_and_exit(&report);
+                }
+            });
+            // SAFETY: main-thread WebKit call with a live cookie.
+            unsafe { store.setCookie_completionHandler(cookie, Some(&saved)) };
         }
-        let _ = writeln!(out, "done");
-        let _ = out.flush();
-        std::process::exit(0);
     });
     // SAFETY: main-thread WebKit calls.
     unsafe { web_view.configuration().websiteDataStore().httpCookieStore().getAllCookies(&done) };
 }
 
+/// Prints `cookies` for the app and exits. WebKit writes them to its cookie
+/// file as this process exits (and not before: measured); the app waits for
+/// that with `wait_until_saved`.
+fn report_and_exit(cookies: &[Cookie]) -> ! {
+    let mut out = std::io::stdout().lock();
+    for cookie in cookies {
+        let _ = writeln!(out, "{}", format_cookie(cookie));
+    }
+    let _ = writeln!(out, "done");
+    let _ = out.flush();
+    std::process::exit(0)
+}
+
+/// Waits, up to 3 s, until WebKit's cookie file holds `cookies` (all but
+/// session cookies, which it never saves), so the player helper starts
+/// signed in. Called by the app once the login helper has exited.
+pub fn wait_until_saved(cookies: &[Cookie]) {
+    for _ in 0..30 {
+        let saved = std::fs::read(crate::paths::cookies()).ok().and_then(|data| parse_binary_cookies(&data));
+        if saved.is_some_and(|saved| {
+            cookies
+                .iter()
+                .filter(|c| c.expires > 0.0)
+                .all(|c| saved.iter().any(|s| (&s.domain, &s.name, &s.value) == (&c.domain, &c.name, &c.value)))
+        }) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// `--prune-helper`: deletes everything WebKit stores for Kilo except
+/// YouTube's data, then exits: 0 once it's done, 1 if WebKit didn't finish
+/// in time.
+pub fn prune() -> ! {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let app = windowless(mtm);
+    // SAFETY: main-thread WebKit calls; WebKit retains the blocks.
+    unsafe {
+        let store = WKWebsiteDataStore::defaultDataStore(mtm);
+        let types = WKWebsiteDataStore::allWebsiteDataTypes(mtm);
+        let (store2, types2) = (store.clone(), types.clone());
+        let fetched = RcBlock::new(move |records: NonNull<NSArray<WKWebsiteDataRecord>>| {
+            // A record is a site (registrable domain): youtube.com's covers
+            // music.youtube.com too.
+            let others: Vec<Retained<WKWebsiteDataRecord>> =
+                records.as_ref().iter().filter(|r| r.displayName().to_string() != "youtube.com").collect();
+            let removed = RcBlock::new(|| std::process::exit(0));
+            store2.removeDataOfTypes_forDataRecords_completionHandler(&types2, &NSArray::from_retained_slice(&others), &removed);
+        });
+        store.fetchDataRecordsOfTypes_completionHandler(&types, &fetched);
+    }
+    run_or_give_up(&app)
+}
+
 /// `--sign-out-helper`: deletes everything WebKit stores for Kilo (cookies,
 /// so the session, and every site's caches and storage), then exits: 0 once
-/// it's done, 1 if WebKit didn't finish within 15 s.
+/// it's done, 1 if WebKit didn't finish in time.
 pub fn sign_out() -> ! {
     let mtm = MainThreadMarker::new().expect("main thread");
-    let app = NSApplication::sharedApplication(mtm);
-    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let app = windowless(mtm);
     let done = RcBlock::new(|| std::process::exit(0));
     // SAFETY: main-thread WebKit calls; the block outlives the call.
     unsafe {
@@ -221,8 +298,20 @@ pub fn sign_out() -> ! {
             &done,
         );
     }
-    let when = dispatch2::DispatchTime::NOW.time(15_000_000_000);
-    let _ = dispatch2::DispatchQueue::main().after(when, || std::process::exit(1));
+    run_or_give_up(&app)
+}
+
+/// An app with no Dock icon and no windows, for the data helpers.
+fn windowless(mtm: MainThreadMarker) -> Retained<NSApplication> {
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    app
+}
+
+/// Runs until the helper's work exits the process, or exits 1 after 15 s.
+fn run_or_give_up(app: &NSApplication) -> ! {
+    let when = DispatchTime::NOW.time(15_000_000_000);
+    let _ = DispatchQueue::main().after(when, || std::process::exit(1));
     app.run();
     std::process::exit(1)
 }
