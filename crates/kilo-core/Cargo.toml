@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # The OS's own TLS (Security.framework, SChannel, OpenSSL): no TLS code of our own.
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls", "gzip"] }

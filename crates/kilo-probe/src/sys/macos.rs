@@ -89,8 +89,9 @@ pub fn adopted(pids: &[u32]) -> Vec<u32> {
         const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
         // Private but long-stable libSystem symbol; resolved at runtime so a
         // future removal degrades to "no adoption" instead of a crash.
-        // SAFETY: dlsym with a NUL-terminated name; the symbol has this signature.
+        // SAFETY: dlsym with a NUL-terminated name.
         let sym = unsafe { dlsym(RTLD_DEFAULT, c"responsibility_get_pid_responsible_for_pid".as_ptr()) };
+        // SAFETY: a non-null result is that function, which has this signature.
         (!sym.is_null()).then(|| unsafe { std::mem::transmute::<*mut c_void, Responsible>(sym) })
     });
     let Some(func) = func else { return Vec::new() };

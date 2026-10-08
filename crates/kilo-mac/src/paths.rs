@@ -15,9 +15,10 @@ pub fn cookies() -> PathBuf {
     home().join(format!("Library/HTTPStorages/{BUNDLE_ID}.binarycookies"))
 }
 
-/// Small state Kilo writes itself (cached page config).
-pub fn support() -> PathBuf {
-    home().join("Library/Application Support/Kilo")
+/// music.youtube.com's page config, cached for a day (the only state Kilo
+/// writes itself).
+pub fn config() -> PathBuf {
+    home().join("Library/Application Support/Kilo/innertube.txt")
 }
 
 /// Downloaded thumbnails; the system may purge this.

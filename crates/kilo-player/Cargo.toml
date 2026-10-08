@@ -5,13 +5,17 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-[dependencies]
-kilo-probe = { path = "../kilo-probe" }
+[lints]
+workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.5"
-block2 = "0.6.2"
-dispatch2 = "0.3.1"
-objc2-foundation = "0.3.2"
-objc2-app-kit = "0.3.2"
-objc2-web-kit = "0.3.2"
+block2.workspace = true
+dispatch2.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+objc2-web-kit.workspace = true
+
+[dev-dependencies]
+# Only the scripted session in examples/ measures anything.
+kilo-probe = { path = "../kilo-probe" }

@@ -1,0 +1,4 @@
+# Kilo's code is written wide: one idea per line reads better than many
+# wrapped ones in the objc2 calls that make up most of the UI code.
+max_width = 140
+use_small_heuristics = "Max"

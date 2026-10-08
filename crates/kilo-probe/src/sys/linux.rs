@@ -80,9 +80,7 @@ pub fn adopted(_pids: &[u32]) -> Vec<u32> {
 }
 
 pub fn all_processes() -> Vec<(u32, String)> {
-    proc_pids()
-        .filter_map(|pid| Some((pid, fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim_end().to_owned())))
-        .collect()
+    proc_pids().filter_map(|pid| Some((pid, fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim_end().to_owned()))).collect()
 }
 
 fn proc_pids() -> impl Iterator<Item = u32> {

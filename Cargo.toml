@@ -7,8 +7,27 @@ version = "0.2.0"
 edition = "2024"
 publish = false
 
+# One version of each macOS binding for every crate.
+[workspace.dependencies]
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-app-kit = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-image-io = "0.3.2"
+objc2-io-surface = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-web-kit = "0.3.2"
+
+[workspace.lints.clippy]
+# Every `unsafe` block says why it's sound (`// SAFETY: …`).
+undocumented_unsafe_blocks = "warn"
+
 # Every kilobyte counts: release builds trade compile time for size and speed.
-# opt-level 3 vs "s" is decided by measurement, not by taste (see docs/PLAN.md).
+# opt-level "s" hasn't been measured against 3 yet; switch only if kilo-probe
+# shows it wins.
 [profile.release]
 opt-level = 3
 lto = "fat"

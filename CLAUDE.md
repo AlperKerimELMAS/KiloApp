@@ -26,8 +26,8 @@ architecture, the status and the next steps. Details and measurements are in
 | Crate | What it is |
 |---|---|
 | `crates/kilo-core` | Portable: HTTP on the OS's TLS, auth from WebKit's cookie file, YouTube Music web API client, lean serde parsers, models, queue |
-| `crates/kilo-player` | The player helper (WKWebView on macOS) and its one-line text protocol |
-| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper` and `--login-helper` |
+| `crates/kilo-player` | The player helper (WKWebView on macOS) and its one-line text protocol; `examples/session.rs` is a scripted, measured session |
+| `crates/kilo-mac` | The macOS app (AppKit via objc2). The binary `Kilo` also runs as `--player-helper` and `--login-helper`. `src/app/` holds the state (`mod.rs`), pages (`browse.rs`), queue, player and sign-in |
 | `crates/kilo-probe` | Measures footprint and CPU like the OS task managers, over the process tree plus the XPC services macOS charges to the app |
 | `crates/kilo-spike-web`, `crates/kilo-ui-bench` | Measurement labs |
 
@@ -35,7 +35,8 @@ architecture, the status and the next steps. Details and measurements are in
 
 ```sh
 ./packaging/macos/bundle.sh --install     # build Kilo.app and copy it to /Applications
-cargo clippy --release --workspace -- -D warnings      # also run with --target x86_64-pc-windows-msvc
+cargo fmt --all
+cargo clippy --release --workspace --all-targets -- -D warnings      # also run with --target x86_64-pc-windows-msvc
 cargo test --workspace
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown
 scripts/measure.sh dist/Kilo.app wait:15           # launch, run a scenario, measure
@@ -44,8 +45,9 @@ scripts/measure.sh dist/Kilo.app wait:15           # launch, run a scenario, mea
 Developer switches live in `crates/kilo-mac/src/debug.rs`: `KILO_SNAPSHOT`,
 `KILO_OPEN`, `KILO_NO_ACTIVATE`, `KILO_SCENARIO`. There's no Screen
 Recording permission, so use `KILO_SNAPSHOT` to see the UI. `KILO_SCENARIO`
-can also browse, scroll, play and print the page and queue state, which is
-how lazy loading and the queue are tested.
+can also browse, scroll, play (`volume:0` first to stay silent) and print
+the page and queue state, which is how lazy loading and the queue are
+tested.
 
 ## Things that bit us
 
@@ -82,6 +84,7 @@ how lazy loading and the queue are tested.
 ## Style
 
 - Match the surrounding code: concise doc comments, and a `SAFETY:` comment
-  on every `unsafe` block.
-- Keep clippy at `-D warnings` on macOS and Windows.
+  on every `unsafe` block (clippy enforces it).
+- Keep clippy at `-D warnings` on macOS and Windows, and `cargo fmt` clean
+  (CI checks all three).
 - End commit messages with the Co-Authored-By line.

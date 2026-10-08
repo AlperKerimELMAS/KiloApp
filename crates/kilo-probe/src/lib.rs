@@ -105,11 +105,7 @@ pub fn breakdown(roots: &[u32]) -> Vec<(u32, String, Sample)> {
 pub fn find_by_name(name: &str) -> Vec<u32> {
     let me = std::process::id();
     let name = strip_exe(name);
-    sys::all_processes()
-        .into_iter()
-        .filter(|(pid, n)| *pid != me && strip_exe(n).eq_ignore_ascii_case(name))
-        .map(|(pid, _)| pid)
-        .collect()
+    sys::all_processes().into_iter().filter(|(pid, n)| *pid != me && strip_exe(n).eq_ignore_ascii_case(name)).map(|(pid, _)| pid).collect()
 }
 
 fn strip_exe(name: &str) -> &str {

@@ -8,13 +8,10 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowStyleMask};
-use objc2_foundation::{
-    NSArray, NSError, NSHTTPCookie, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest, ns_string,
-};
+use objc2_foundation::{NSArray, NSError, NSHTTPCookie, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest, ns_string};
 use objc2_web_kit::{
     WKAudiovisualMediaTypes, WKContentRuleList, WKContentRuleListStore, WKInactiveSchedulingPolicy, WKScriptMessage,
-    WKScriptMessageHandler, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView,
-    WKWebViewConfiguration,
+    WKScriptMessageHandler, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration,
 };
 
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
@@ -240,7 +237,19 @@ impl Bridge {
 fn parse_args() -> Result<Args, String> {
     let mut it = std::env::args().skip(1);
     let mode = it.next().ok_or("missing mode: login | play <videoId>")?;
-    let mut args = Args { login: mode == "login", video_id: String::new(), seconds: 60, lean: false, lockdown: false, profile: false, strip: 0, size: (400.0, 300.0), sched: WKInactiveSchedulingPolicy::None, site: Site::Ytm, host: Host::None };
+    let mut args = Args {
+        login: mode == "login",
+        video_id: String::new(),
+        seconds: 60,
+        lean: false,
+        lockdown: false,
+        profile: false,
+        strip: 0,
+        size: (400.0, 300.0),
+        sched: WKInactiveSchedulingPolicy::None,
+        site: Site::Ytm,
+        host: Host::None,
+    };
     if !args.login {
         if mode != "play" {
             return Err(format!("unknown mode {mode:?}"));
@@ -304,7 +313,9 @@ pub fn main() {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("error: {e}\nusage: kilo-spike-web login | play <videoId> [--seconds N] [--lean] [--lockdown] [--profile] [--strip ui|all] [--size WxH] [--sched none|throttle|suspend] [--site ytm|ytm-mobile|mweb] [--host none|offscreen|visible]");
+            eprintln!(
+                "error: {e}\nusage: kilo-spike-web login | play <videoId> [--seconds N] [--lean] [--lockdown] [--profile] [--strip ui|all] [--size WxH] [--sched none|throttle|suspend] [--site ytm|ytm-mobile|mweb] [--host none|offscreen|visible]"
+            );
             std::process::exit(2);
         }
     };
@@ -312,11 +323,7 @@ pub fn main() {
 
     let mtm = MainThreadMarker::new().expect("main thread");
     let app = NSApplication::sharedApplication(mtm);
-    app.setActivationPolicy(if args.login {
-        NSApplicationActivationPolicy::Regular
-    } else {
-        NSApplicationActivationPolicy::Accessory
-    });
+    app.setActivationPolicy(if args.login { NSApplicationActivationPolicy::Regular } else { NSApplicationActivationPolicy::Accessory });
     report.push(format!("AppKit initialized       {}", fmt(&measure())));
 
     let login = args.login;
@@ -459,14 +466,10 @@ fn start_web_view(mtm: MainThreadMarker, config: &WKWebViewConfiguration, url: &
     // SAFETY: main-thread AppKit/WebKit calls with valid arguments.
     unsafe {
         let size = if login { NSSize::new(480.0, 720.0) } else { NSSize::new(w, h) };
-        let web_view =
-            WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), NSRect::new(NSPoint::ZERO, size), config);
+        let web_view = WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), NSRect::new(NSPoint::ZERO, size), config);
         let window = (login || host != Host::None).then(|| {
             let (style, rect) = if login {
-                (
-                    NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Resizable,
-                    NSRect::new(NSPoint::ZERO, size),
-                )
+                (NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Resizable, NSRect::new(NSPoint::ZERO, size))
             } else if host == Host::Visible {
                 (NSWindowStyleMask::Titled, NSRect::new(NSPoint::new(40.0, 40.0), NSSize::new(160.0, 90.0)))
             } else {
@@ -556,7 +559,11 @@ fn tick() {
                 if secs == 6 && field(&status, "has_video") == Some("true") {
                     with_state(|s| {
                         if let Some(wv) = &s.web_view {
-                            eval(wv, "(() => { const v = document.querySelector('video'); if (v) v.muted = false; __kilo.play(); })()", |_| {});
+                            eval(
+                                wv,
+                                "(() => { const v = document.querySelector('video'); if (v) v.muted = false; __kilo.play(); })()",
+                                |_| {},
+                            );
                         }
                     });
                 }
@@ -568,10 +575,8 @@ fn tick() {
                         s.phase = Phase::Playing;
                         s.phase_at = Instant::now();
                         s.playing_from = Some((Instant::now(), measure()));
-                        s.playing_cpu = kilo_probe::breakdown(&[std::process::id()])
-                            .into_iter()
-                            .map(|(pid, _, sample)| (pid, sample.cpu_ns))
-                            .collect();
+                        s.playing_cpu =
+                            kilo_probe::breakdown(&[std::process::id()]).into_iter().map(|(pid, _, sample)| (pid, sample.cpu_ns)).collect();
                     });
                     log(&format!("playing: {status}"));
                     with_state(|s| {
@@ -682,9 +687,7 @@ fn tick_signing_in(web_view: Option<Retained<WKWebView>>) {
         return;
     }
     // SAFETY: main-thread WebKit call.
-    let on_ytm = unsafe { web_view.URL() }
-        .and_then(|u| u.host())
-        .is_some_and(|h| h.to_string() == "music.youtube.com");
+    let on_ytm = unsafe { web_view.URL() }.and_then(|u| u.host()).is_some_and(|h| h.to_string() == "music.youtube.com");
     if !on_ytm {
         return;
     }

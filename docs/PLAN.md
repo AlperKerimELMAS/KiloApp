@@ -29,8 +29,8 @@ included (on macOS that also means WebKit's XPC services).
 | State | Target | Status (macOS) |
 |---|---|---|
 | Window open, idle | ≤ 40 MB Retina, ≤ 22 MB at 1× | **31 MB measured** (Home loaded, Retina, 0% CPU); 27 MB with the window closed |
-| Playing, everything included | ≤ 125 MB | **113–118 MB measured** |
-| Paused for more than a few minutes | main process only | **2.3 MB measured** (helper killed) |
+| Playing, everything included | ≤ 125 MB | **147.5 MB measured** for the app with its window open (`docs/COMPARISON.md`); the player alone, under a 2 MB test host, is 113–118 MB |
+| Paused for more than a few minutes | main process only | **31 MB measured** (helper shut down; the UI is what's left); 2.3 MB for the test host |
 
 Baseline (same Mac, 2026-10-06): the YouTube Music PWA in Chrome, playing a
 song, uses **1,082–1,161 MB** across 28 processes at about 9.5% CPU. Of that:
@@ -102,7 +102,7 @@ attestation.
 itself with `--player-helper` and talks to it over a one-line text protocol
 (`load <id> <start>`, `play`, `pause`, `seek`, `volume`, `quit` →
 `ready`, `playing|paused|buffering|ended <t> <duration> <id>`, `signed-out`,
-`ad`, `error`). A scripted session (`kilo-player <idA> <idB>`, run as an
+`ad`, `error`). A scripted session (`session <idA> <idB>`, run as an
 `.app` bundle), from 2026-10-06:
 
 | Phase | Result |
@@ -288,41 +288,44 @@ SetStoreUpdateService (2.1 MB), as Activity Monitor would.
 
 ## Architecture
 
+As built (the crates are described in `docs/HANDOFF.md`, section 4):
+
 ```
-main process (never loads WebKit)
-├─ UI thread: layout, CPU rasterizer that redraws only changed areas, image cache
-├─ engine thread: InnerTube client for browse, search, library and likes
-└─ OS media controls: MPRIS / SMTC / MPNowPlayingInfoCenter, media keys
-
-player helper (the same binary in `--player` mode; JSON lines over stdin/stdout)
-└─ hidden web view running YouTube's own player
-   started on play, killed after N minutes paused, which frees all of WebKit
-
-login helper: a visible web view for Google sign-in, then exits
+Kilo (one binary, three roles)
+├─ the app (no arguments): native UI on the main thread, network and image
+│  decoding on two small worker pools; never loads WebKit
+├─ --player-helper: hidden web view running YouTube's own player, driven by
+│  one-line text messages over stdin/stdout; started on play, shut down
+│  after 5 minutes paused, which frees all of WebKit
+└─ --login-helper: a visible web view for Google sign-in, then exits
 ```
 
 - **Language:** Rust.
-- **UI:** Slint with its software renderer, or a custom CPU renderer
-  (vello_cpu or tiny-skia, with parley for text). Phase 0 decides by
-  measurement.
-- **Web views:** WKWebView on macOS, WebView2 on Windows (it has a public
-  memory-target API to try), WebKitGTK on Linux.
+- **UI:** native per OS over a shared core (`kilo-core`). On macOS that's
+  AppKit, chosen by measurement over Slint's software and GPU renderers
+  (the first plan also considered a custom CPU renderer).
+- **Web views:** WKWebView on macOS; WebView2 on Windows (it has a public
+  memory-target API to try) and WebKitGTK on Linux are planned.
 - **Queue:** Kilo owns the queue and switches tracks with the player's own
   `loadVideoById`, which avoids reloading the page.
+- **Media controls:** the media keys and Control Center go through the
+  hidden page's Media Session, routed to Kilo's queue. MPRIS (Linux) and
+  SMTC (Windows) come with those front ends.
 
 ## Memory rules
 
 1. Nothing runs unless something changed: no render loop, no polling.
-2. Thumbnails are requested at exact pixel size. Decoded pixels stay in RAM
-   only while visible.
+2. Thumbnails are requested at exact pixel size. Decoded pixels count
+   toward the footprint only while visible; the rest are purgeable.
 3. JSON is parsed straight into small structs and then dropped. Going back to
    a page re-requests it rather than keeping it in memory.
 4. Lists render only their visible rows.
 5. A closed window means no UI in memory at all.
 6. WebKit only ever runs in the player helper, which exits when idle.
-7. Every subsystem has a byte budget, shown in a debug overlay and enforced
-   in CI.
-8. Every dependency has to justify its size (checked with cargo-bloat in CI).
+7. Every dependency has to justify its size.
+
+Planned, not in place yet: a byte budget per subsystem, shown in a debug
+overlay and enforced in CI, and a cargo-bloat check in CI.
 
 ## What we learned about the web client (2026-10-06)
 
@@ -335,19 +338,7 @@ login helper: a visible web view for Google sign-in, then exits
 
 ## Next steps
 
-1. **Now Playing view:** big art plus Up next / Lyrics / Related tabs, and a
-   queue panel.
-2. **Account actions:** like and dislike, add to playlist, and loading the
-   rest of long playlists.
-3. **Window closed:** measure memory with the UI fully torn down while
-   playing.
-4. **Windows and Linux front ends,** over `kilo-core` and `kilo-player`:
-   - Windows: Win32/Direct2D with a WebView2 helper. WebView2 has a public
-     memory-target API.
-   - Linux: GTK or similar, with a WebKitGTK helper.
-   - Measure both on real machines.
-5. **Distribution:** Developer ID signing and notarization.
-6. **Verify** that plays from the helper show up in YouTube Music history.
+The current, prioritized list is in `docs/HANDOFF.md`, section 6.
 
 ## Tools
 
@@ -355,9 +346,11 @@ login helper: a visible web view for Google sign-in, then exits
   counts the whole process tree, including macOS XPC services attributed to
   the app. A binary started from a terminal has its XPC services attributed to
   the terminal, so measure `.app` bundles launched with `open`.
-- `crates/kilo-player`: `kilo-player <idA> <idB>` runs the scripted session
-  above. Run it as `target/release/KiloPlayer.app` through `open -W -o out.txt
-  ... --args`. Its dev bundle id reuses the spike's signed-in data store.
+- `crates/kilo-player`: `cargo build --release -p kilo-player --example
+  session` builds the scripted session above (`session <idA> <idB>`). Run it
+  as a `KiloPlayer.app` wrapping `target/release/examples/session`, through
+  `open -W -o out.txt ... --args`. Its dev bundle id reuses the spike's
+  signed-in data store.
 - `kilo-probe <pid> --breakdown` lists every process with its footprint and
   CPU.
 - `crates/kilo-spike-web`: `login`, then

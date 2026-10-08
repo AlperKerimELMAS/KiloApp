@@ -87,7 +87,7 @@ fn checked(resp: std::result::Result<Response, ureq::Error>) -> Result<Response>
         return Err(Error::SignedOut);
     }
     if status >= 400 {
-        return Err(Error::Http(format!("HTTP {status}")));
+        return Err(Error::Status(status));
     }
     Ok(resp)
 }

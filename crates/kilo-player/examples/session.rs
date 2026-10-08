@@ -1,9 +1,13 @@
-//! `kilo-player <videoIdA> <videoIdB>`: drives the player helper through a
-//! scripted session and measures each phase, the way Kilo will use it:
-//! play A, let it end, switch to B in the same page, pause, kill the helper
-//! as if idle, then start a fresh helper and resume B where it left off.
+//! `cargo run --release -p kilo-player --example session -- <videoIdA> <videoIdB>`
+//! drives the player helper through a scripted session and measures each
+//! phase, the way Kilo uses it: play A, let it end, switch to B in the same
+//! page, pause, kill the helper as if idle, then start a fresh helper and
+//! resume B where it left off.
 //!
-//! `kilo-player --player-helper` runs the helper side (spawned by the host).
+//! `session --player-helper` runs the helper side (spawned by the host).
+//! Started from a terminal, its XPC services are charged to the terminal, so
+//! run it from an `.app` bundle with `open` when measuring (docs/PLAN.md,
+//! "Tools").
 
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver};
@@ -20,7 +24,7 @@ fn main() -> ExitCode {
     }
     let ids: Vec<VideoId> = args.iter().filter_map(|a| VideoId::parse(a)).collect();
     if ids.len() != 2 || args.len() != 2 {
-        eprintln!("usage: kilo-player <videoIdA> <videoIdB>");
+        eprintln!("usage: session <videoIdA> <videoIdB>");
         return ExitCode::from(2);
     }
     match Session::new().and_then(|mut s| s.run(&ids[0], &ids[1])) {

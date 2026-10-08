@@ -11,12 +11,15 @@ fn main() {}
 fn main() {
     use objc2::MainThreadMarker;
     use objc2::MainThreadOnly;
-    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSTextField, NSView, NSWindow, NSWindowStyleMask};
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSTextField, NSView, NSWindow, NSWindowStyleMask,
+    };
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
     let mtm = MainThreadMarker::new().unwrap();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    // SAFETY: standard NSWindow initializer on the main thread.
     let window = unsafe {
         NSWindow::initWithContentRect_styleMask_backing_defer(
             NSWindow::alloc(mtm),

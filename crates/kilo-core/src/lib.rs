@@ -13,9 +13,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    /// No usable sign-in cookies.
+    /// No usable sign-in cookies, or the server turned them down.
     SignedOut,
+    /// The request didn't complete (offline, timeout, TLS…).
     Http(String),
+    /// The server answered with this error status.
+    Status(u16),
     /// The response didn't have the shape we expect.
     Parse(String),
 }
@@ -25,9 +28,15 @@ impl std::fmt::Display for Error {
         match self {
             Error::SignedOut => f.write_str("not signed in"),
             Error::Http(e) => write!(f, "network error: {e}"),
+            Error::Status(code) => write!(f, "network error: HTTP {code}"),
             Error::Parse(e) => write!(f, "unexpected response: {e}"),
         }
     }
 }
 
 impl std::error::Error for Error {}
+
+/// Seconds since the Unix epoch (0 if the clock is before it).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}

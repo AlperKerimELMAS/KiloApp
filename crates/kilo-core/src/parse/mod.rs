@@ -113,7 +113,8 @@ pub fn up_next(json: &[u8]) -> Result<Vec<Entry>> {
                     let mut versions: Vec<PanelVideo> = std::iter::once(w.primary_renderer.playlist_panel_video_renderer)
                         .chain(w.counterpart.into_iter().map(|c| c.counterpart_renderer.playlist_panel_video_renderer))
                         .collect();
-                    let song = versions.iter().position(|v| video_type(v.navigation_endpoint.as_ref()) == "MUSIC_VIDEO_TYPE_ATV").unwrap_or(0);
+                    let song =
+                        versions.iter().position(|v| video_type(v.navigation_endpoint.as_ref()) == "MUSIC_VIDEO_TYPE_ATV").unwrap_or(0);
                     versions.swap_remove(song)
                 }
                 (None, None) => return None,
@@ -136,7 +137,9 @@ fn sections(contents: Vec<SectionItem>, page: &mut Page) {
         if let Some(h) = item.music_responsive_header_renderer {
             page.header = Some(responsive_header(&h));
         }
-        if let Some(inner) = item.music_editable_playlist_detail_header_renderer.and_then(|h| h.header).and_then(|h| h.music_responsive_header_renderer) {
+        if let Some(inner) =
+            item.music_editable_playlist_detail_header_renderer.and_then(|h| h.header).and_then(|h| h.music_responsive_header_renderer)
+        {
             page.header = Some(responsive_header(&inner));
         }
         if let Some(shelf) = item.music_carousel_shelf_renderer.or(item.music_immersive_carousel_shelf_renderer) {
@@ -234,7 +237,10 @@ fn entry(item: ShelfItem) -> Option<Entry> {
         return Some(Entry {
             title: join(&r.title).into(),
             subtitle: join(&r.subtitle).into(),
-            thumb: r.thumbnail_renderer.music_thumbnail_renderer.as_ref().and_then(thumb_of).map(|mut t| { t.wide = wide; t }),
+            thumb: r.thumbnail_renderer.music_thumbnail_renderer.as_ref().and_then(thumb_of).map(|mut t| {
+                t.wide = wide;
+                t
+            }),
             target: r.navigation_endpoint.as_ref().map_or(Target::None, target),
             duration: "".into(),
         });
@@ -243,7 +249,12 @@ fn entry(item: ShelfItem) -> Option<Entry> {
         let mut columns = r.flex_columns.iter().map(|c| &c.music_responsive_list_item_flex_column_renderer.text);
         let title = columns.next().map(join_linked).unwrap_or_default();
         let subtitle = columns.map(join_linked).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" • ");
-        let first_run_target = r.flex_columns.first().and_then(|c| c.music_responsive_list_item_flex_column_renderer.text.runs.first()).and_then(|run| run.navigation_endpoint.as_ref()).map(target);
+        let first_run_target = r
+            .flex_columns
+            .first()
+            .and_then(|c| c.music_responsive_list_item_flex_column_renderer.text.runs.first())
+            .and_then(|run| run.navigation_endpoint.as_ref())
+            .map(target);
         let target = if let Some(video_id) = r.playlist_item_data.as_ref().map(|p| p.video_id.clone()).filter(|v| !v.is_empty()) {
             let (playlist_id, music_video) = match &first_run_target {
                 Some(Target::Play { playlist_id, music_video, .. }) => (playlist_id.clone(), *music_video),
@@ -328,7 +339,10 @@ fn header(h: &HeaderRenderers) -> Option<Header> {
             title: join(&r.title).into(),
             subtitle: join(&r.monthly_listener_count).into(),
             detail: "".into(),
-            thumb: r.thumbnail.music_thumbnail_renderer.as_ref().and_then(thumb_of).map(|mut t| { t.wide = true; t }),
+            thumb: r.thumbnail.music_thumbnail_renderer.as_ref().and_then(thumb_of).map(|mut t| {
+                t.wide = true;
+                t
+            }),
             description: join(&r.description).into(),
         });
     }

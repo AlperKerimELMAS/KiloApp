@@ -5,13 +5,12 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 
 use crate::auth::Session;
 use crate::http::Http;
-use crate::{Error, Result};
+use crate::{Error, Result, unix_now};
 
 const ORIGIN: &str = "https://music.youtube.com";
 const API: &str = "https://music.youtube.com/youtubei/v1/";
@@ -219,7 +218,7 @@ impl Client {
             let mut masked = headers.to_vec();
             masked.push(("X-Goog-FieldMask", mask));
             match self.http.post_json(&url, &masked, &body) {
-                Err(Error::Http(e)) if e == "HTTP 400" => {
+                Err(Error::Status(400)) => {
                     MASK_REJECTED.store(true, Ordering::Relaxed);
                     eprintln!("kilo: {endpoint} field mask rejected; sending full requests");
                 }
@@ -228,8 +227,4 @@ impl Client {
         }
         self.http.post_json(&url, &headers, &body)
     }
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }

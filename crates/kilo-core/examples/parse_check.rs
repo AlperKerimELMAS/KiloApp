@@ -17,10 +17,20 @@ fn main() {
     let page = if args[0] == "search" { kilo_core::parse::search(&data) } else { kilo_core::parse::browse(&data) }.expect("parse");
     println!("parsed {} KB in {:?}", data.len() / 1024, t.elapsed());
     if let Some(h) = &page.header {
-        println!("HEADER {:?} / {:?} / {:?} thumb={}", h.title, h.subtitle, h.detail, h.thumb.as_ref().map(|t| t.sized(400)).unwrap_or_default());
+        println!(
+            "HEADER {:?} / {:?} / {:?} thumb={}",
+            h.title,
+            h.subtitle,
+            h.detail,
+            h.thumb.as_ref().map(|t| t.sized(400)).unwrap_or_default()
+        );
     }
     for s in &page.sections {
-        let kind = match s { Section::Cards { .. } => "cards", Section::List { .. } => "list", Section::Text { .. } => "text" };
+        let kind = match s {
+            Section::Cards { .. } => "cards",
+            Section::List { .. } => "list",
+            Section::Text { .. } => "text",
+        };
         println!("[{kind}] {:?} ({} entries)", s.title(), s.entries().len());
         for e in s.entries().iter().take(2) {
             let t = match &e.target {

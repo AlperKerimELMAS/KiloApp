@@ -13,8 +13,8 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSArray, NSError, NSHTTPCookie, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest, ns_string};
 use objc2_web_kit::{
-    WKAudiovisualMediaTypes, WKContentRuleList, WKInactiveSchedulingPolicy, WKContentRuleListStore, WKNavigationAction, WKNavigationActionPolicy,
-    WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKUserScript,
+    WKAudiovisualMediaTypes, WKContentRuleList, WKContentRuleListStore, WKInactiveSchedulingPolicy, WKNavigationAction,
+    WKNavigationActionPolicy, WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKUserScript,
     WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration,
 };
 
@@ -83,6 +83,9 @@ const BRIDGE: &str = r#"(() => {
     load(id, start) { p().loadVideoById(id, start); },
     play() { p().playVideo(); },
     pause() { p().pauseVideo(); },
+    // Checked when it runs, not when the event that asked for it was sent:
+    // a stale event about the previous track must not pause the next one.
+    pauseUnless(want) { if (id() !== want) p().pauseVideo(); },
     seek(s) { p().seekTo(s, true); },
     volume(v) { const q = p(); q.unMute(); q.setVolume(v); if (video) video.muted = false; },
     tiny() { const q = p(); if (q.setPlaybackQualityRange) q.setPlaybackQualityRange('tiny', 'tiny'); },
@@ -280,11 +283,7 @@ fn create_web_view(mtm: MainThreadMarker) {
     with(|h| {
         // SAFETY: main-thread AppKit/WebKit calls with valid arguments.
         unsafe {
-            let web_view = WKWebView::initWithFrame_configuration(
-                WKWebView::alloc(mtm),
-                NSRect::new(NSPoint::ZERO, VIEW_SIZE),
-                &h.config,
-            );
+            let web_view = WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), NSRect::new(NSPoint::ZERO, VIEW_SIZE), &h.config);
             web_view.setCustomUserAgent(Some(&NSString::from_str(IPHONE_UA)));
             web_view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*h.delegate)));
             // WebKit only runs media for a view that's in a window, so park
@@ -372,7 +371,10 @@ fn on_page_message(msg: &str) {
             let Some(video) = video.filter(|v| Some(v) == expected.as_ref()) else {
                 if kind == "playing" {
                     // Never play anything the app didn't ask for.
-                    js("__kilo.pause()");
+                    match &expected {
+                        Some(want) => js(&format!("__kilo.pauseUnless('{want}')")),
+                        None => js("__kilo.pause()"),
+                    }
                 }
                 return;
             };

@@ -55,8 +55,7 @@ pub struct VideoId(String);
 
 impl VideoId {
     pub fn parse(s: &str) -> Option<Self> {
-        (s.len() == 11 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
-            .then(|| VideoId(s.to_owned()))
+        (s.len() == 11 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')).then(|| VideoId(s.to_owned()))
     }
 
     pub fn as_str(&self) -> &str {

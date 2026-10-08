@@ -7,6 +7,10 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{Command, Event};
 
+/// The `Event::Error` message delivered last, once the helper's output has
+/// ended: it quit, crashed or was killed.
+pub const EXITED: &str = "helper exited";
+
 /// A running player helper. Dropping it kills the helper.
 pub struct PlayerProcess {
     child: Child,
@@ -17,12 +21,8 @@ impl PlayerProcess {
     /// Starts `exe --player-helper` and delivers its events to `on_event`
     /// from a reader thread. The thread ends when the helper exits.
     pub fn spawn(exe: &Path, on_event: impl Fn(Event) + Send + 'static) -> io::Result<Self> {
-        let mut child = Process::new(exe)
-            .arg("--player-helper")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+        let mut child =
+            Process::new(exe).arg("--player-helper").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
         let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
         std::thread::Builder::new().name("player-events".into()).stack_size(64 * 1024).spawn(move || {
@@ -33,8 +33,8 @@ impl PlayerProcess {
                     None => on_event(Event::Error(format!("unparsable helper message: {line}"))),
                 }
             }
-            // Its stdout closed: the helper is gone (quit, crashed or killed).
-            on_event(Event::Error("helper exited".into()));
+            // Its stdout closed: the helper is gone.
+            on_event(Event::Error(EXITED.into()));
         })?;
         Ok(PlayerProcess { child, stdin })
     }

@@ -8,8 +8,9 @@
 //!   session for measurements; each step is logged to stderr with the time
 //!   since launch. Steps: `play:ID`, `pause`, `next`, `close`, `open`,
 //!   `playvideo:ID` (as a click on a music video's card), `browse:ID`,
-//!   `scroll:Y` (or `scroll:end`), `playall`, `shuffleall`,
-//!   `state` (logs the page and queue), `wait:SECS`.
+//!   `scroll:Y` (or `scroll:end`), `playall`, `shuffleall`, `volume:0-100`
+//!   (`volume:0` first to test playback silently), `state` (logs the page
+//!   and queue), `wait:SECS`.
 
 use std::cell::Cell;
 
@@ -54,20 +55,17 @@ pub fn schedule_snapshot(window: &NSWindow) {
         s.get()
     });
     let path = format!("{}-{n}.png", base.to_string_lossy());
-    let window = window.retain();
-    let when = dispatch2::DispatchTime::NOW.time(4_000_000_000);
-    let window = std::sync::Mutex::new(Some(window));
-    // The window is only touched back on the main thread.
+    /// Carries a main-thread object through GCD's main queue.
     struct MainOnly<T>(T);
-    // SAFETY: the value is created and used on the main thread only; it's
-    // merely carried through GCD's main queue.
+    // SAFETY: the value is created on the main thread and only used again
+    // on the main queue, which runs on the main thread.
     unsafe impl<T> Send for MainOnly<T> {}
-    let carried = MainOnly(window);
+    let window = MainOnly(window.retain());
+    let when = dispatch2::DispatchTime::NOW.time(4_000_000_000);
     let _ = dispatch2::DispatchQueue::main().after(when, move || {
-        let carried = carried;
-        if let Some(w) = carried.0.lock().ok().and_then(|mut w| w.take()) {
-            render(&w, &path);
-        }
+        // Captures the whole wrapper, not just its (non-`Send`) field.
+        let window = window;
+        render(&window.0, &path);
     });
 }
 
@@ -160,6 +158,10 @@ fn step(steps: Vec<String>, i: usize) {
         }
         "next" => {
             crate::app::next();
+            0.0
+        }
+        "volume" => {
+            crate::app::set_volume(arg.parse().unwrap_or(100));
             0.0
         }
         "playvideo" => {

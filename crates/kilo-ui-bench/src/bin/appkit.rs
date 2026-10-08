@@ -1,6 +1,8 @@
-//! Bench: the same YouTube Music-like window as the Slint bench, built with
-//! native AppKit views. `BENCH_IMAGES=30 appkit` prints the footprint every
-//! 2 s and quits after 10 s.
+//! Bench: a YouTube Music-like window built with stock AppKit views and
+//! Auto Layout (the window the Slint comparison in docs/PLAN.md used).
+//! `BENCH_IMAGES=30 appkit` prints the footprint every 2 s and quits after
+//! 10 s. `BENCH_*` switches add one control each (`BENCH_SLIDER`,
+//! `BENCH_FOCUS`, …), which is how the costly ones were found.
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}
@@ -15,13 +17,13 @@ mod mac {
     use std::cell::Cell;
     use std::ptr::NonNull;
 
-    use objc2::rc::Retained;
     use objc2::AnyThread;
     use objc2::MainThreadMarker;
     use objc2::MainThreadOnly;
+    use objc2::rc::Retained;
     use objc2_app_kit::{
-        NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSApplication, NSApplicationActivationPolicy, NSBackingStoreType,
-        NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace, NSFont, NSImage, NSImageScaling, NSImageView, NSScrollView,
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSApplication, NSApplicationActivationPolicy,
+        NSBackingStoreType, NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace, NSFont, NSImage, NSImageScaling, NSImageView, NSScrollView,
         NSSearchField, NSStackView, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowStyleMask,
     };
     use objc2_foundation::{NSArray, NSPoint, NSRect, NSSize, NSString, NSTimer};
@@ -36,6 +38,8 @@ mod mac {
     }
 
     fn gradient(px: usize, seed: usize) -> Retained<NSImage> {
+        // SAFETY: AppKit allocates the bitmap (null planes), which is
+        // `px` × `px` RGBA pixels as described, and outlives the slice.
         unsafe {
             let rep = NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
                 NSBitmapImageRep::alloc(),
@@ -65,11 +69,7 @@ mod mac {
     fn stack(views: &[Retained<NSView>], vertical: bool, spacing: f64, mtm: MainThreadMarker) -> Retained<NSStackView> {
         let refs: Vec<&NSView> = views.iter().map(|v| &**v).collect();
         let s = NSStackView::stackViewWithViews(&NSArray::from_slice(&refs), mtm);
-        s.setOrientation(if vertical {
-            NSUserInterfaceLayoutOrientation::Vertical
-        } else {
-            NSUserInterfaceLayoutOrientation::Horizontal
-        });
+        s.setOrientation(if vertical { NSUserInterfaceLayoutOrientation::Vertical } else { NSUserInterfaceLayoutOrientation::Horizontal });
         s.setSpacing(spacing);
         s
     }
@@ -89,6 +89,7 @@ mod mac {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
+        // SAFETY: standard NSWindow initializer on the main thread.
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
@@ -98,9 +99,12 @@ mod mac {
                 false,
             )
         };
+        // SAFETY: plain property setter.
         unsafe { window.setReleasedWhenClosed(false) };
         window.setTitle(&NSString::from_str("Kilo AppKit bench"));
-        window.setAppearance(NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).as_deref());
+        // SAFETY: NSAppearanceNameDarkAqua is a constant string.
+        let dark = unsafe { NSAppearanceNameDarkAqua };
+        window.setAppearance(NSAppearance::appearanceNamed(dark).as_deref());
         window.setBackgroundColor(Some(&NSColor::colorWithSRGBRed_green_blue_alpha(0.012, 0.012, 0.012, 1.0)));
 
         let side: Vec<Retained<NSView>> = ["Home", "Explore", "Library"]
@@ -169,12 +173,14 @@ mod mac {
             root.addArrangedSubview(&s);
         }
         if flag("BENCH_BUTTON") {
+            // SAFETY: no target or action.
             let b = unsafe { objc2_app_kit::NSButton::buttonWithTitle_target_action(&NSString::from_str("Sign in"), None, None, mtm) };
             root.addArrangedSubview(&b);
         }
         if flag("BENCH_SPINNER") {
             let p = objc2_app_kit::NSProgressIndicator::new(mtm);
             p.setStyle(objc2_app_kit::NSProgressIndicatorStyle::Spinning);
+            // SAFETY: plain AppKit call on the main thread.
             unsafe { p.startAnimation(None) };
             root.addArrangedSubview(&p);
         }
@@ -186,7 +192,15 @@ mod mac {
             let bar = objc2_app_kit::NSMenu::new(mtm);
             let edit = objc2_app_kit::NSMenu::initWithTitle(objc2_app_kit::NSMenu::alloc(mtm), &NSString::from_str("Edit"));
             for (t, a, k) in [("Copy", objc2::sel!(copy:), "c"), ("Paste", objc2::sel!(paste:), "v")] {
-                let item = unsafe { objc2_app_kit::NSMenuItem::initWithTitle_action_keyEquivalent(objc2_app_kit::NSMenuItem::alloc(mtm), &NSString::from_str(t), Some(a), &NSString::from_str(k)) };
+                // SAFETY: standard NSMenuItem initializer.
+                let item = unsafe {
+                    objc2_app_kit::NSMenuItem::initWithTitle_action_keyEquivalent(
+                        objc2_app_kit::NSMenuItem::alloc(mtm),
+                        &NSString::from_str(t),
+                        Some(a),
+                        &NSString::from_str(k),
+                    )
+                };
                 edit.addItem(&item);
             }
             let holder = objc2_app_kit::NSMenuItem::new(mtm);
@@ -213,6 +227,7 @@ mod mac {
                 std::process::exit(0);
             }
         });
+        // SAFETY: the timer retains the block; it runs on the main run loop.
         unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(2.0, true, &block) };
         app.run();
     }

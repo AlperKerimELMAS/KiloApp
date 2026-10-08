@@ -5,9 +5,9 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly, sel};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSApplication, NSBackingStoreType, NSButton,
-    NSCellImagePosition, NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSSearchField, NSTextAlignment,
-    NSTextField, NSView, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSApplication, NSBackingStoreType, NSButton, NSCellImagePosition,
+    NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSSearchField, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
@@ -35,6 +35,7 @@ pub struct PlayerBar {
     pub play: Retained<NSButton>,
     pub time: Retained<NSTextField>,
     pub progress: Retained<Bar>,
+    pub volume: Retained<Bar>,
 }
 
 pub fn build(mtm: MainThreadMarker) -> Shell {
@@ -81,10 +82,11 @@ pub fn build(mtm: MainThreadMarker) -> Shell {
         layer.setBackgroundColor(Some(&sidebar_bg().CGColor()));
     }
     let brand = label("Kilo", 22.0, Weight::Bold, false, mtm);
-    let nav: Vec<Retained<NSButton>> = [("Home", "house.fill", sel!(home:)), ("Explore", "safari", sel!(explore:)), ("Library", "books.vertical", sel!(library:))]
-        .into_iter()
-        .map(|(title, symbol, action)| nav_button(title, symbol, action, mtm))
-        .collect();
+    let nav: Vec<Retained<NSButton>> =
+        [("Home", "house.fill", sel!(home:)), ("Explore", "safari", sel!(explore:)), ("Library", "books.vertical", sel!(library:))]
+            .into_iter()
+            .map(|(title, symbol, action)| nav_button(title, symbol, action, mtm))
+            .collect();
     let mut items: Vec<&NSView> = vec![&brand];
     items.extend(nav.iter().map(|b| &**b as &NSView));
     let nav_stack = stack(&items, true, 6.0, mtm);
@@ -188,6 +190,7 @@ fn player_bar(mtm: MainThreadMarker) -> (Retained<NSView>, PlayerBar) {
     let now = stack(&[&art, &text], false, 12.0, mtm);
     now.setAlignment(objc2_app_kit::NSLayoutAttribute::CenterY);
 
+    // Only an icon: disabled, so its action never fires.
     let speaker = symbol_button("speaker.wave.2.fill", sel!(playPause:), 14.0, mtm);
     speaker.setEnabled(false);
     let volume = Bar::new(Kind::Volume, 4.0, &super::text(), mtm);
@@ -211,7 +214,7 @@ fn player_bar(mtm: MainThreadMarker) -> (Retained<NSView>, PlayerBar) {
     c(right.trailingAnchor().constraintEqualToAnchor_constant(&root.trailingAnchor(), -20.0));
     c(right.centerYAnchor().constraintEqualToAnchor_constant(&root.centerYAnchor(), 4.0));
 
-    (root, PlayerBar { art, title, artist, play, time, progress })
+    (root, PlayerBar { art, title, artist, play, time, progress, volume })
 }
 
 /// The menu bar: app, edit (so copy/paste work in the search field),
@@ -225,7 +228,14 @@ pub fn install_menu(mtm: MainThreadMarker) {
     add(&app_menu, "About Kilo", Some(sel!(orderFrontStandardAboutPanel:)), "", None, mtm);
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
     add(&app_menu, "Hide Kilo", Some(sel!(hide:)), "h", None, mtm);
-    add(&app_menu, "Hide Others", Some(sel!(hideOtherApplications:)), "h", Some(NSEventModifierFlags::Command | NSEventModifierFlags::Option), mtm);
+    add(
+        &app_menu,
+        "Hide Others",
+        Some(sel!(hideOtherApplications:)),
+        "h",
+        Some(NSEventModifierFlags::Command | NSEventModifierFlags::Option),
+        mtm,
+    );
     add(&app_menu, "Show All", Some(sel!(unhideAllApplications:)), "", None, mtm);
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
     add(&app_menu, "Quit Kilo", Some(sel!(terminate:)), "q", None, mtm);

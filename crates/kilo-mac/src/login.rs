@@ -2,6 +2,8 @@
 //! view. Kilo never sees the password. Once YouTube Music shows the user as
 //! signed in, the helper prints the YouTube cookies (one per line) for the
 //! app and exits; WebKit keeps them in its store for the player helper too.
+//!
+//! The app reads that output with `parse_output`.
 
 use std::cell::Cell;
 use std::io::Write;
@@ -9,12 +11,11 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 
 use block2::RcBlock;
+use kilo_core::auth::Cookie;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowDelegate, NSWindowStyleMask};
 use objc2_foundation::{NSArray, NSHTTPCookie, NSNotification, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest};
 use objc2_web_kit::{WKWebView, WKWebViewConfiguration};
 
@@ -76,12 +77,14 @@ pub fn run() -> ! {
     // Shared between the timer and the asynchronous cookie check.
     let signed_in_at: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
     let ticks = Cell::new(0u32);
+    let reported = Cell::new(false);
     let wv = web_view.clone();
     let tick = RcBlock::new(move |_t: NonNull<NSTimer>| {
         ticks.set(ticks.get() + 1);
         if let Some(at) = signed_in_at.get() {
-            // Let the redirect chain finish setting cookies, then report.
-            if ticks.get() >= at + 2 {
+            // Let the redirect chain finish setting cookies, then report
+            // (once: the helper exits when the cookies arrive).
+            if ticks.get() >= at + 2 && !reported.replace(true) {
                 report_cookies_and_exit(&wv);
             }
             return;
@@ -125,8 +128,13 @@ fn report_cookies_and_exit(web_view: &WKWebView) {
             if !domain.ends_with("youtube.com") {
                 continue;
             }
-            let expires = c.expiresDate().map_or(0.0, |d| d.timeIntervalSince1970());
-            let _ = writeln!(out, "cookie\t{domain}\t{}\t{}\t{expires}", c.name(), c.value());
+            let cookie = Cookie {
+                domain,
+                name: c.name().to_string(),
+                value: c.value().to_string(),
+                expires: c.expiresDate().map_or(0.0, |d| d.timeIntervalSince1970()),
+            };
+            let _ = writeln!(out, "{}", format_cookie(&cookie));
         }
         let _ = writeln!(out, "done");
         let _ = out.flush();
@@ -134,4 +142,38 @@ fn report_cookies_and_exit(web_view: &WKWebView) {
     });
     // SAFETY: main-thread WebKit calls.
     unsafe { web_view.configuration().websiteDataStore().httpCookieStore().getAllCookies(&done) };
+}
+
+/// One line of the helper's output: `cookie⇥domain⇥name⇥value⇥expires`.
+fn format_cookie(c: &Cookie) -> String {
+    format!("cookie\t{}\t{}\t{}\t{}", c.domain, c.name, c.value, c.expires)
+}
+
+/// The cookies in the helper's output (other lines are skipped).
+pub fn parse_output(stdout: &str) -> Vec<Cookie> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split('\t');
+            (f.next()? == "cookie").then_some(())?;
+            Some(Cookie {
+                domain: f.next()?.to_owned(),
+                name: f.next()?.to_owned(),
+                value: f.next()?.to_owned(),
+                expires: f.next()?.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookies_round_trip_through_the_helper_output() {
+        let c = Cookie { domain: ".youtube.com".into(), name: "SAPISID".into(), value: "a/b=c".into(), expires: 1_790_000_000.5 };
+        let out = format!("{}\nsomething else\ndone\n", format_cookie(&c));
+        assert_eq!(parse_output(&out), vec![c]);
+    }
 }

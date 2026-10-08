@@ -6,7 +6,7 @@ session). For depth:
 - `docs/PLAN.md`: design and every measurement.
 - `docs/COMPARISON.md`: the measured comparison with Chrome.
 
-**Last updated:** 2026-10-07 (efficiency pass) · **Version:** 0.2 ·
+**Last updated:** 2026-10-07 (cleanup before publishing) · **Version:** 0.2 ·
 **Branch:** `main` (no remote yet)
 
 ---
@@ -117,6 +117,27 @@ inspired by Spotifast, a native Rust Spotify client that claims 100–250 MB.
      of JSON), Home and long playlists load as you scroll, thumbnails are
      q75 JPEG or WebP (33–55% smaller), the daily config read stops after
      64 KB, and HTTP buffers are 16 KB instead of 128 KB.
+8. **Cleanup before publishing (2026-10-07).** No behavior changes beyond the
+   fixes below; footprint (30.9 MB, window open) and binary size (+16 bytes)
+   measured unchanged.
+   - **Structure:** `kilo-mac`'s 1,200-line `app.rs` is now `app/` (`mod.rs`
+     state and window, `browse.rs`, `queue.rs`, `player.rs`, `session.rs`).
+     The player's scripted session moved to `kilo-player/examples/`, so the
+     player library no longer depends on `kilo-probe`. One version of each
+     objc2 crate in `[workspace.dependencies]`; `rustfmt.toml` (width 140);
+     clippy's `undocumented_unsafe_blocks` lint enforces `SAFETY:` comments;
+     CI in `.github/workflows/ci.yml`.
+   - **Fixes:** a late "ended" from the previous track no longer skips a
+     track; events from a helper that's been replaced are ignored (a dying
+     helper's "exited" could take the new one); if the helper dies while
+     playing, the bar stops and play resumes from there; the volume slider
+     keeps its value when the window reopens; a slow "play playlist" or
+     radio answer can't replace or extend a queue started after it; a radio
+     or list part that failed to load is asked for again when the queue
+     needs it; the radio also takes over after a long list ends;
+     Previous/seek work after the idle shutdown; the helper's guard against
+     unrequested videos no longer pauses the next track on a stale event;
+     quitting the helper after an ad or sign-out no longer blocks the UI.
 
 ## 4. Architecture
 
@@ -130,8 +151,8 @@ Kilo.app/Contents/MacOS/Kilo  (one binary, three roles)
 | Crate | Role |
 |---|---|
 | `kilo-core` (portable) | `http.rs` (ureq on the OS's TLS via native-tls), `auth.rs` (reads WebKit's cookie file, builds the request signature YouTube's web client uses), `client.rs` (API calls: browse, continuation, search, next, `next_single` for a track's song version, page config cached 24 h in `~/Library/Application Support/Kilo/innertube.txt`; "up next" requests carry a field mask), `parse/` (serde structs naming only the fields Kilo shows, no JSON tree, under 2 ms per page; the same structs generate the field mask), `model.rs` (Page, Section::{Cards, List, Text}, Entry, Target, Thumb with exact-size URLs), `queue.rs` |
-| `kilo-player` | `protocol.rs`: commands `load <id> <start>`, `play`, `pause`, `seek`, `volume`, `quit`; events `ready`, `playing`/`paused`/`buffering`/`ended <t> <dur> <id>`, `signed-out`, `ad`, `next`, `previous`, `error`. `host.rs`: spawn, send, and emit `error helper exited` when it dies. `helper/mac.rs`: the WKWebView setup, the page bridge, ad and unexpected-video guards, media-key routing. `main.rs`: a scripted test session. |
-| `kilo-mac` | `app.rs` (state, navigation, sign-in, queue, player control, idle shutdown; the window exists only while open; pages and long lists load as they scroll, and a queue started from a long list takes the rest as it arrives), `ui/` (`mod.rs` helpers and views, `page.rs` lazy pages, `shell.rs` window, sidebar, player bar and menus, `bar.rs` slider), `images.rs` (disk cache, ImageIO decode into IOSurfaces, 16 MB purgeable cache), `net.rs` (two small worker pools with main-thread completions), `login.rs`, `paths.rs`, `debug.rs` (developer switches) |
+| `kilo-player` | `protocol.rs`: commands `load <id> <start>`, `play`, `pause`, `seek`, `volume`, `quit`; events `ready`, `playing`/`paused`/`buffering`/`ended <t> <dur> <id>`, `signed-out`, `ad`, `next`, `previous`, `error`. `host.rs`: spawn, send, and emit `error helper exited` (`host::EXITED`) when it dies. `helper/mac.rs`: the WKWebView setup, the page bridge, ad and unexpected-video guards, media-key routing. `examples/session.rs`: a scripted test session. |
+| `kilo-mac` | `app/` (`mod.rs`: state, launch, the window, which exists only while open; `browse.rs`: navigation, pages and long lists loading as they scroll; `queue.rs`: queues, a queue started from a long list taking the rest as it arrives, the radio; `player.rs`: the helper and its events, the player bar, idle shutdown; `session.rs`: sign-in and connecting), `ui/` (`mod.rs` helpers and views, `page.rs` lazy pages, `shell.rs` window, sidebar, player bar and menus, `bar.rs` slider), `images.rs` (disk cache, ImageIO decode into IOSurfaces, 16 MB purgeable cache), `net.rs` (two small worker pools with main-thread completions), `login.rs` (the sign-in helper and its output format), `paths.rs`, `debug.rs` (developer switches) |
 | `kilo-probe` | Memory and CPU like the OS task managers show, summed over the whole process tree, including the macOS XPC services charged to the app. macOS, Windows and Linux. |
 | `kilo-spike-web`, `kilo-ui-bench` | The measurement labs behind the decisions above |
 
@@ -146,10 +167,11 @@ by it.
 
 ```sh
 ./packaging/macos/bundle.sh --install    # build dist/Kilo.app and copy it to /Applications
-cargo clippy --release --workspace -- -D warnings
-cargo clippy --release --workspace --target x86_64-pc-windows-msvc -- -D warnings
-cargo clippy --release -p kilo-probe -p kilo-player --target x86_64-unknown-linux-gnu -- -D warnings
-cargo test --workspace                    # 11 tests
+cargo fmt --all -- --check               # rustfmt.toml: width 140
+cargo clippy --release --workspace --all-targets -- -D warnings
+cargo clippy --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+cargo clippy --release -p kilo-probe -p kilo-player --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+cargo test --workspace                    # 17 tests
 ./target/release/kilo-probe <pid> -d 30 -i 5 --breakdown [--csv f.csv]
 ```
 
@@ -162,8 +184,9 @@ cargo test --workspace                    # 11 tests
 - `KILO_SCENARIO=wait:3,play:ID,wait:95,close,wait:65,pause,wait:345` runs a
   scripted session and logs each step to stderr. Other steps: `playvideo:ID`
   (as a click on a music video's card), `browse:ID`, `scroll:Y` or
-  `scroll:end`, `playall`, `shuffleall`, `next`, `open`, and `state`, which
-  logs the page's sections and the queue.
+  `scroll:end`, `playall`, `shuffleall`, `next`, `open`, `volume:N`
+  (`volume:0` first to test playback silently), and `state`, which logs
+  the page's sections and the queue.
 
 **Measuring:** `scripts/measure.sh dist/Kilo.app wait:15` (window open),
 `... wait:12,close,wait:20` (closed), `... --play VIDEO_ID` (playing, with
@@ -211,8 +234,12 @@ loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
      youtube.com cookies. Today WebKit's file holds the full Google session
      unencrypted, in a folder only the user can read.
 4. **Before publishing:**
-   - Choose a license (MIT suggested; not decided yet).
-   - Get the owner's go-ahead before creating a GitHub remote.
+   - Choose a license (MIT suggested; not decided yet). Then add `LICENSE`,
+     `license` in `Cargo.toml`, and update the README's License section.
+   - Decide whether `docs/HANDOFF.md` and `CLAUDE.md` (working notes,
+     including details about the owner's account) go public as they are.
+   - Get the owner's go-ahead before creating a GitHub remote. CI
+     (`.github/workflows/ci.yml`) runs once it's pushed.
    - Optionally, Developer ID signing and notarization.
 5. **Features:** a Now Playing view (big art plus Up next and Lyrics), a
    queue panel, like/dislike, add to playlist.
@@ -227,5 +254,6 @@ loaded: 31 MB total, 27 MB with the window closed, 0% CPU when idle.
 
 **Leftovers:**
 - `dist/` is git-ignored.
-- `crates/kilo-spike-web` and the dev `KiloPlayer.app` share the
-  `kilo-spike-web` cookie store.
+- `crates/kilo-spike-web` and the dev `KiloPlayer.app` (wrapping
+  `target/release/examples/session`) share the `kilo-spike-web` cookie
+  store.

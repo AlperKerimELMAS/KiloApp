@@ -1,8 +1,8 @@
 //! Pages are laid out by hand, without Auto Layout, and only what's near the
 //! screen exists as views: each header, shelf, row or text block is created
-//! when it scrolls within a screen of view and destroyed when it leaves.
-//! Thumbnails load only while visible. Memory follows the screen, not the
-//! length of the page.
+//! when it scrolls within half a screen of view and destroyed when it
+//! leaves. Thumbnails load only while visible. Memory follows the screen,
+//! not the length of the page.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -197,7 +197,8 @@ impl PageView {
         let horizon = clip.origin.y + 2.0 * clip.size.height;
         for (si, s) in self.page.sections.iter().enumerate() {
             if let Section::List { continuation: Some(token), .. } = s {
-                let end = self.blocks.iter().filter(|b| matches!(b.kind, Kind::Row(s, _) if s == si)).map(|b| b.y + b.h).fold(0.0, f64::max);
+                let end =
+                    self.blocks.iter().filter(|b| matches!(b.kind, Kind::Row(s, _) if s == si)).map(|b| b.y + b.h).fold(0.0, f64::max);
                 if end <= horizon {
                     return Some((More::List, token.clone()));
                 }

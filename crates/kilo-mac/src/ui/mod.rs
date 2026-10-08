@@ -1,8 +1,8 @@
 //! Native AppKit building blocks: colors, labels, image layers, clickable
 //! items, and the action target that buttons call into.
 //!
-//! Images are drawn by handing the decoded `CGImage` straight to a layer
-//! (`layer.contents`): no `NSImage`, no extra copy.
+//! Images are drawn by handing a decoded IOSurface straight to a layer
+//! (`layer.contents`, see `images`): no `NSImage`, no copy.
 
 pub mod bar;
 pub mod page;
@@ -14,9 +14,9 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSButton, NSColor, NSEvent, NSFont, NSFontWeightBold, NSFontWeightMedium, NSFontWeightRegular,
-    NSImage, NSLayoutConstraintOrientation, NSLineBreakMode, NSSearchField, NSStackView, NSTextField,
-    NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceLayoutOrientation, NSView,
+    NSButton, NSColor, NSEvent, NSFont, NSFontWeightBold, NSFontWeightMedium, NSFontWeightRegular, NSImage, NSImageSymbolConfiguration,
+    NSLayoutConstraintOrientation, NSLineBreakMode, NSSearchField, NSStackView, NSTextField, NSTrackingArea, NSTrackingAreaOptions,
+    NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSArray, NSRect, NSString};
 use objc2_quartz_core::{CALayer, kCAGravityResizeAspectFill};
@@ -138,11 +138,7 @@ pub fn set_image(view: &NSView, image: Option<&crate::images::Image>) {
 
 pub fn stack(views: &[&NSView], vertical: bool, spacing: f64, mtm: MainThreadMarker) -> Retained<NSStackView> {
     let s = NSStackView::stackViewWithViews(&NSArray::from_slice(views), mtm);
-    s.setOrientation(if vertical {
-        NSUserInterfaceLayoutOrientation::Vertical
-    } else {
-        NSUserInterfaceLayoutOrientation::Horizontal
-    });
+    s.setOrientation(if vertical { NSUserInterfaceLayoutOrientation::Vertical } else { NSUserInterfaceLayoutOrientation::Horizontal });
     s.setSpacing(spacing);
     s
 }
@@ -173,9 +169,8 @@ pub fn symbol_button(symbol: &str, action: objc2::runtime::Sel, point_size: f64,
     let button = unsafe { NSButton::buttonWithImage_target_action(&image, Some(target), Some(action), mtm) };
     button.setBordered(false);
     button.setContentTintColor(Some(&text()));
-    if let Some(cfg) = objc2_app_kit::NSImageSymbolConfiguration::configurationWithPointSize_weight(point_size, 0.0).into() {
-        button.setSymbolConfiguration(Some(&cfg));
-    }
+    let config = NSImageSymbolConfiguration::configurationWithPointSize_weight(point_size, 0.0);
+    button.setSymbolConfiguration(Some(&config));
     button
 }
 

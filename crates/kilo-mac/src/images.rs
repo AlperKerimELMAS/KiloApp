@@ -22,8 +22,8 @@ use objc2_image_io::{
     kCGImageSourceShouldCacheImmediately, kCGImageSourceThumbnailMaxPixelSize,
 };
 use objc2_io_surface::{
-    IOSurfaceLockOptions, IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfaceColorSpace,
-    kIOSurfaceHeight, kIOSurfacePixelFormat, kIOSurfaceWidth,
+    IOSurfaceLockOptions, IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfaceColorSpace, kIOSurfaceHeight,
+    kIOSurfacePixelFormat, kIOSurfaceWidth,
 };
 
 use crate::net::{self, Pool};
@@ -154,17 +154,21 @@ pub fn load(url: String, px: u32, done: impl FnOnce(Option<Image>) + 'static) {
     }
     let key = url.clone();
     let letterboxed = url.contains("i.ytimg.com/");
-    net::run(Pool::Images, move || fetch(&url).and_then(|bytes| decode(&bytes, px, letterboxed)), move |img| {
-        let waiters = CACHE.with_borrow_mut(|c| {
-            if let Some(img) = &img {
-                c.insert(key.clone(), img.clone());
+    net::run(
+        Pool::Images,
+        move || fetch(&url).and_then(|bytes| decode(&bytes, px, letterboxed)),
+        move |img| {
+            let waiters = CACHE.with_borrow_mut(|c| {
+                if let Some(img) = &img {
+                    c.insert(key.clone(), img.clone());
+                }
+                c.in_flight.remove(&key).unwrap_or_default()
+            });
+            for w in waiters {
+                w(img.clone());
             }
-            c.in_flight.remove(&key).unwrap_or_default()
-        });
-        for w in waiters {
-            w(img.clone());
-        }
-    });
+        },
+    );
 }
 
 /// Soon, makes the cached images nothing shows purgeable. Call whenever
@@ -256,7 +260,8 @@ fn surface(w: usize, h: usize) -> Option<CFRetained<IOSurfaceRef>> {
     unsafe {
         let row = IOSurfaceRef::align_property(kIOSurfaceBytesPerRow, w * 4);
         let numbers = [w, h, 4, row, 0x4247_5241 /* 'BGRA' */].map(|n| CFNumber::new_i64(n as i64));
-        let keys: [&CFString; 5] = [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfacePixelFormat];
+        let keys: [&CFString; 5] =
+            [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfacePixelFormat];
         let values: [&CFType; 5] = [&numbers[0], &numbers[1], &numbers[2], &numbers[3], &numbers[4]];
         IOSurfaceRef::new(CFDictionary::from_slices(&keys, &values).as_opaque())
     }

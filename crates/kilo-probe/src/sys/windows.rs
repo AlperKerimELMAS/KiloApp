@@ -64,13 +64,7 @@ unsafe extern "system" {
     fn OpenProcess(access: u32, inherit: Bool, pid: u32) -> Handle;
     fn CloseHandle(handle: Handle) -> Bool;
     fn K32GetProcessMemoryInfo(process: Handle, counters: *mut MemoryCounters, cb: u32) -> Bool;
-    fn GetProcessTimes(
-        process: Handle,
-        creation: *mut FileTime,
-        exit: *mut FileTime,
-        kernel: *mut FileTime,
-        user: *mut FileTime,
-    ) -> Bool;
+    fn GetProcessTimes(process: Handle, creation: *mut FileTime, exit: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> Bool;
     fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> Handle;
     fn Process32FirstW(snapshot: Handle, entry: *mut ProcessEntry) -> Bool;
     fn Process32NextW(snapshot: Handle, entry: *mut ProcessEntry) -> Bool;

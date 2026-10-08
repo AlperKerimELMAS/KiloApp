@@ -78,8 +78,11 @@ impl Queue {
     pub fn extend_shuffled(&mut self, more: Vec<Entry>, rng: &mut Rng) {
         for e in more {
             if self.is_new(&e) {
-                let upcoming = self.entries.len() - self.index;
-                let at = self.index + 1 + rng.below(upcoming);
+                // Any slot after the current track, up to the end.
+                let at = match self.entries.len().checked_sub(self.index) {
+                    Some(upcoming @ 1..) => self.index + 1 + rng.below(upcoming),
+                    _ => self.entries.len(),
+                };
                 self.entries.insert(at, e);
             }
         }
@@ -157,5 +160,13 @@ mod tests {
         assert_eq!(q.entries().len(), 4);
         assert_eq!(q.current().and_then(Entry::video_id), Some("bbbbbbbbbbb"));
         assert_eq!(q.entries()[0].video_id(), Some("aaaaaaaaaaa"));
+    }
+
+    #[test]
+    fn shuffled_additions_to_an_empty_queue_dont_panic() {
+        let mut q = Queue::default();
+        q.extend_shuffled(vec![song("aaaaaaaaaaa"), song("bbbbbbbbbbb")], &mut Rng::new());
+        assert_eq!(q.entries().len(), 2);
+        assert_eq!(q.current().and_then(Entry::video_id), Some("aaaaaaaaaaa"));
     }
 }

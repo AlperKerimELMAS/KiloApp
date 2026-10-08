@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "Kilo"
 path = "src/main.rs"
@@ -14,14 +17,14 @@ kilo-core = { path = "../kilo-core" }
 kilo-player = { path = "../kilo-player" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.5"
-block2 = "0.6.2"
-dispatch2 = "0.3.1"
-objc2-foundation = "0.3.2"
-objc2-app-kit = "0.3.2"
-objc2-web-kit = "0.3.2"
-objc2-quartz-core = "0.3.2"
-objc2-core-foundation = "0.3.2"
-objc2-core-graphics = "0.3.2"
-objc2-image-io = "0.3.2"
-objc2-io-surface = "0.3.2"
+block2.workspace = true
+dispatch2.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-graphics.workspace = true
+objc2-foundation.workspace = true
+objc2-image-io.workspace = true
+objc2-io-surface.workspace = true
+objc2-quartz-core.workspace = true
+objc2-web-kit.workspace = true

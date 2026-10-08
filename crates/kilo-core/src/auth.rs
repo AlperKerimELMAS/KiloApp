@@ -4,7 +4,7 @@
 //! Kilo never sees the password. The user signs in to Google inside a system
 //! web view; the web engine stores the cookies, and the app reads them.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::unix_now;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cookie {
@@ -75,10 +75,6 @@ impl Session {
         }
         Some(header)
     }
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// Parses WebKit's `.binarycookies` file (how WKWebView stores cookies on
