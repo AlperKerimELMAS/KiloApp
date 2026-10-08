@@ -49,6 +49,7 @@ strings! {
     SigningIn => "Signing in…", "Oturum açılıyor…";
     SigningInBody => "Finish signing in in the window that opened.", "Açılan pencerede oturum açmayı tamamlayın.";
     SignInWindow => "Sign in to YouTube Music", "YouTube Music'te oturum açın";
+    SignedInOpening => "Signed in. Opening Kilo…", "Oturum açıldı. Kilo açılıyor…";
     Cancel => "Cancel", "Vazgeç";
     SomethingWrong => "Something went wrong", "Bir sorun oluştu";
     TryAgain => "Try again", "Tekrar dene";

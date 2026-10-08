@@ -87,6 +87,10 @@ shortcuts are tested.
 - **WebKit writes cookies to its file only when its process exits.** A
   helper that sets cookies must exit before anyone reads the file
   (`login::wait_until_saved`).
+- **Kilo's browser identity is the Mac's own Safari.** `main` reads its
+  version (`kilo_core::http::set_safari_version`) for the app's requests
+  and the sign-in window alike; Google turns away sign-in windows whose
+  claimed Safari doesn't match their engine. Never hardcode a version.
 - **Only YouTube's cookies are ever stored.** The sign-in window's store is
   in memory; never give it (or the player) a persistent store that could
   keep Google's account session.

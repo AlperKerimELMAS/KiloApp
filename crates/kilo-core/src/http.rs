@@ -2,6 +2,7 @@
 //! threads; the UI thread never blocks on the network.
 
 use std::io::Read;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
@@ -9,9 +10,34 @@ use ureq::{Agent, ResponseExt};
 
 use crate::{Error, Result};
 
-/// Desktop Safari: the same browser identity as the sign-in web view.
-pub const USER_AGENT: &str =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0.1 Safari/605.1.15";
+/// The Safari version Kilo's browser identity names (`set_safari_version`).
+static SAFARI: OnceLock<String> = OnceLock::new();
+/// When the Mac's own Safari version can't be read.
+const DEFAULT_SAFARI: &str = "27.0.1";
+
+/// Names the Mac's own Safari in Kilo's browser identity, for the app's
+/// requests and the sign-in window alike. Call once, before any request: a
+/// sign-in window claiming a Safari newer than its engine is the kind of
+/// mismatch Google turns away ("This browser or app may not be secure").
+pub fn set_safari_version(version: &str) {
+    if !version.is_empty() && version.len() <= 16 && version.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        let _ = SAFARI.set(version.to_owned());
+    }
+}
+
+/// The Safari version in Kilo's browser identity.
+pub fn safari_version() -> &'static str {
+    SAFARI.get().map_or(DEFAULT_SAFARI, String::as_str)
+}
+
+/// Desktop Safari's user agent: the same browser identity as the sign-in
+/// web view.
+pub fn user_agent() -> String {
+    format!(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{} Safari/605.1.15",
+        safari_version()
+    )
+}
 
 /// Largest response body we accept (browse pages are 0.2–1 MB of JSON).
 const MAX_BODY: u64 = 8 * 1024 * 1024;
@@ -37,7 +63,7 @@ impl Http {
         let agent: Agent = Agent::config_builder()
             .tls_config(tls)
             .timeout_global(Some(Duration::from_secs(20)))
-            .user_agent(USER_AGENT)
+            .user_agent(user_agent())
             // Every request, and every redirect, is https: nothing Kilo
             // fetches (or decodes) travels in the clear.
             .https_only(true)

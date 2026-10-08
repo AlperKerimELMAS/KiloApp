@@ -15,7 +15,7 @@
 //!
 //! `--sign-out-helper`: deletes everything WebKit stores for Kilo.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -26,9 +26,10 @@ use dispatch2::{DispatchQueue, DispatchTime};
 use kilo_core::auth::{Cookie, is_sign_in_host, is_youtube_domain, parse_binary_cookies};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
+    NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSFont, NSTextAlignment, NSTextField,
+    NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSDate, NSHTTPCookie, NSNotification, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest};
 use objc2_web_kit::{
@@ -37,10 +38,6 @@ use objc2_web_kit::{
 };
 
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
-
-/// WKWebView is Safari's engine: identify as Safari, exactly like the app's
-/// own requests (`kilo_core::http::USER_AGENT`).
-const SAFARI_APP_NAME: &str = "Version/27.0.1 Safari/605.1.15";
 
 define_class!(
     // SAFETY: NSObject has no subclassing requirements; no ivars, no Drop;
@@ -62,20 +59,16 @@ define_class!(
 
     unsafe impl WKNavigationDelegate for Delegate {
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
-        fn decide(
-            &self,
-            _web_view: &WKWebView,
-            action: &WKNavigationAction,
-            decision: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>,
-        ) {
+        fn decide(&self, web_view: &WKWebView, action: &WKNavigationAction, decision: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>) {
             // SAFETY: WebKit passes live objects on the main thread.
             let (frame, url) = unsafe { (action.targetFrame(), action.request().URL()) };
             let (scheme, host) = url.as_deref().map(scheme_and_host).unwrap_or_default();
-            let allowed = match frame {
+            // SAFETY: a live frame, on the main thread.
+            let main_frame = frame.as_deref().map(|f| unsafe { f.isMainFrame() });
+            let allowed = match main_frame {
                 // The sign-in page's own frames (reCAPTCHA, say).
-                // SAFETY: a live frame, on the main thread.
-                Some(f) if !unsafe { f.isMainFrame() } => true,
-                Some(_) => scheme == "https" && is_sign_in_host(&host),
+                Some(false) => true,
+                Some(true) => scheme == "https" && is_sign_in_host(&host),
                 // A new window: there are none.
                 None => false,
             };
@@ -89,6 +82,9 @@ define_class!(
             }
             crate::debug::trace(|| format!("sign-in: {} {scheme}://{host}", if allowed { "show" } else { "refuse" }));
             decision.call((if allowed { WKNavigationActionPolicy::Allow } else { WKNavigationActionPolicy::Cancel },));
+            if allowed && main_frame == Some(true) && host == "music.youtube.com" {
+                arriving_signed_in(web_view);
+            }
         }
 
         #[unsafe(method(webView:didCommitNavigation:))]
@@ -102,6 +98,29 @@ define_class!(
         }
     }
 );
+
+thread_local! {
+    /// "Signed in. Opening Kilo…", shown in place of the page once it's done.
+    static SIGNED_IN_NOTE: RefCell<Option<Retained<NSTextField>>> = const { RefCell::new(None) };
+}
+
+/// Google is sending the window to YouTube Music, which is where signing in
+/// ends: once the cookies say so, the page is hidden before it's drawn (in
+/// a window this narrow it's YouTube Music's phone layout, for the second
+/// or two until Kilo takes over), and a short note shows instead.
+fn arriving_signed_in(web_view: &WKWebView) {
+    let web_view = web_view.retain();
+    check_signed_in(&web_view.clone(), move |yes| {
+        if yes {
+            web_view.setHidden(true);
+            SIGNED_IN_NOTE.with_borrow(|note| {
+                if let Some(note) = note {
+                    note.setHidden(false);
+                }
+            });
+        }
+    });
+}
 
 /// A URL's scheme and host, lowercased ("" where it has none).
 fn scheme_and_host(url: &NSURL) -> (String, String) {
@@ -122,7 +141,11 @@ pub fn run() -> ! {
         // Signing in creates Google's whole account session: it stays in
         // memory, and only YouTube's cookies are kept (`keep_youtube_cookies`).
         config.setWebsiteDataStore(&WKWebsiteDataStore::nonPersistentDataStore(mtm));
-        config.setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_APP_NAME)));
+        // WKWebView is the Mac's Safari engine: it says so, with Safari's
+        // version, exactly like the app's own requests
+        // (`kilo_core::http::user_agent`).
+        let safari = format!("Version/{} Safari/605.1.15", kilo_core::http::safari_version());
+        config.setApplicationNameForUserAgent(Some(&NSString::from_str(&safari)));
         let size = NSSize::new(480.0, 720.0);
         let web_view = WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), NSRect::new(NSPoint::ZERO, size), &config);
         let window = NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -134,7 +157,25 @@ pub fn run() -> ! {
         );
         window.setReleasedWhenClosed(false);
         window.setTitle(&NSString::from_str(t(S::SignInWindow)));
-        window.setContentView(Some(&web_view));
+        // The page, and under it the note `arriving_signed_in` shows.
+        let content = NSView::initWithFrame(NSView::alloc(mtm), NSRect::new(NSPoint::ZERO, size));
+        let fill = NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable;
+        web_view.setFrame(content.bounds());
+        web_view.setAutoresizingMask(fill);
+        let note = NSTextField::labelWithString(&NSString::from_str(t(S::SignedInOpening)), mtm);
+        note.setFont(Some(&NSFont::systemFontOfSize(15.0)));
+        note.setAlignment(NSTextAlignment::Center);
+        note.setFrame(NSRect::new(NSPoint::new(0.0, size.height / 2.0 - 12.0), NSSize::new(size.width, 24.0)));
+        note.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewMinYMargin
+                | NSAutoresizingMaskOptions::ViewMaxYMargin,
+        );
+        note.setHidden(true);
+        content.addSubview(&note);
+        content.addSubview(&web_view);
+        SIGNED_IN_NOTE.set(Some(note));
+        window.setContentView(Some(&content));
         let delegate: Retained<Delegate> = msg_send![Delegate::alloc(mtm), init];
         window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         // Held weakly by WebKit; `_keep` below holds it.

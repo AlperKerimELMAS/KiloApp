@@ -460,7 +460,18 @@ the window's size), 27 MB with the window closed, 0% CPU when idle.
      will show its sign-in screen after some days; then keeping the
      account cookies in memory isn't enough and this needs a rethink.
    - **Untested end to end:** a fresh sign-in through the new flow (needs
-     the owner's password): Sign Out, Sign In, then play.
+     the owner's password): Sign Out, Sign In, then play. Since 2026-10-08
+     the sign-in window hides YouTube Music's page (its phone layout, in a
+     window that narrow) once the cookies say signed in, and shows "Signed
+     in. Opening Kilo…" until Kilo takes over.
+   - **Google sometimes refuses the sign-in window** ("Couldn't sign you in:
+     this browser or app may not be secure"), more after many sign-ins in a
+     short time; its Try Again has worked. Kilo presents itself as the
+     Mac's own Safari (`kilo_core::http::set_safari_version`, read from
+     Safari at launch): claiming a newer Safari than the engine invites
+     that check. The lasting fix would be signing in through the system
+     browser, which needs a different way to get YouTube's session (a
+     bigger change).
    - WebKit's file holds the YouTube session unencrypted. Encrypting it
      (Keychain, or the App Sandbox, whose containers macOS 14+ shields from
      other apps) needs a stable code signature: with ad-hoc builds, every

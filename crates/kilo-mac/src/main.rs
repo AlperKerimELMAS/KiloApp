@@ -33,11 +33,31 @@ fn main() {
     debug::mark_launch();
     match std::env::args().nth(1).as_deref() {
         Some("--player-helper") => kilo_player::run_helper(),
-        Some("--login-helper") => login::run(),
+        Some("--login-helper") => {
+            identify_browser();
+            login::run()
+        }
         Some("--prune-helper") => login::prune(),
         Some("--sign-out-helper") => login::sign_out(),
-        _ => app::run(),
+        _ => {
+            identify_browser();
+            app::run()
+        }
     }
+}
+
+/// Kilo presents itself as the Mac's own Safari (`kilo_core::http`): reads
+/// which version that is.
+#[cfg(target_os = "macos")]
+fn identify_browser() {
+    use objc2_foundation::{NSBundle, NSString};
+    let version = NSBundle::bundleWithPath(&NSString::from_str("/Applications/Safari.app"))
+        .and_then(|b| b.objectForInfoDictionaryKey(&NSString::from_str("CFBundleShortVersionString")))
+        .and_then(|v| v.downcast::<NSString>().ok());
+    if let Some(version) = version {
+        kilo_core::http::set_safari_version(&version.to_string());
+    }
+    debug::trace(|| format!("launch: Safari {}", kilo_core::http::safari_version()));
 }
 
 #[cfg(not(target_os = "macos"))]
