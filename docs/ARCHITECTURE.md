@@ -240,12 +240,15 @@ in again". YouTube rarely says so with a 401 or 403: it answers as to a
 guest, `logged_in` 0 in the answer's `responseContext`, which the parsers
 turn into `Error::SignedOut` (browse, search, and the account menu, asked
 at every connect); the player page's `LOGGED_IN` false makes the helper
-say `signed-out` instead of `player`. To forget the account,
-`session::forget` clears everything of it in memory, bumps every token above, and starts a new
-`paths::epoch`. **Sign Out** does the same, then stops the player helper,
-has the sign-out helper empty WebKit's stores for Kilo, and deletes Kilo's
-own files (`paths::remove_own_data`). If anything couldn't be deleted, the
-screen says so and offers to try again.
+say `signed-out` instead of `player`. **Sign Out** is the other way. Both
+go through `session::erase_account`: `session::forget` clears everything
+of the account in memory, bumps every token above, and starts a new
+`paths::epoch`; then the player helper stops, the sign-out helper empties
+WebKit's stores for Kilo, and `paths::remove_own_data` deletes Kilo's own
+files and any copy of the cookie file the system left (`_tmp_` saves, a
+`- corrupt` one set aside). A dead session's data is no use to the next
+sign-in, which gets its own. If anything couldn't be deleted, the screen
+says so and offers to try again.
 
 ### The window
 

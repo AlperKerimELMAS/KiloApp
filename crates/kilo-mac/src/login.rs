@@ -33,7 +33,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSDate, NSHTTPCookie, NSNotification, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, NSURLRequest};
 use objc2_web_kit::{
-    WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView, WKWebViewConfiguration,
+    WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKNavigationType, WKWebView, WKWebViewConfiguration,
     WKWebsiteDataRecord, WKWebsiteDataStore,
 };
 
@@ -75,12 +75,18 @@ define_class!(
                 // A new window: there are none.
                 None => false,
             };
+            // SAFETY: as above.
+            let clicked = unsafe { action.navigationType() } == WKNavigationType::LinkActivated;
             if !allowed
+                && clicked
                 && matches!(scheme.as_str(), "https" | "http")
                 && let Some(url) = &url
             {
-                // Somewhere else (a help link, say): the browser shows it,
-                // with its address bar.
+                // A link to somewhere else (help, say): the browser shows
+                // it, with its address bar. Only a link the user clicked: a
+                // redirect's or a frame's address may carry a sign-in token
+                // (Google hands the session between its domains that way),
+                // which must not leave this window.
                 NSWorkspace::sharedWorkspace().openURL(url);
             }
             crate::debug::trace(|| format!("sign-in: {} {scheme}://{host}", if allowed { "show" } else { "refuse" }));

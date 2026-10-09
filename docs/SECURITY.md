@@ -24,9 +24,10 @@ Kilo never sees or stores your password.
 
 **The sign-in window.** It has no address bar, so it only shows the pages
 Google's sign-in uses (an exact list of hosts), over https, and names the
-page's host in its title bar. Any other link, including the rest of
-google.com, where anyone can publish a page, opens in your browser, where
-you can see where it goes.
+page's host in its title bar. Any other link you click, including the
+rest of google.com, where anyone can publish a page, opens in your
+browser, where you can see where it goes. Anything else headed elsewhere
+(a redirect, a frame) is refused: its address may carry a sign-in token.
 
 **Your session.**
 - Signing in creates your whole Google account session. Kilo keeps it in the
@@ -40,8 +41,9 @@ you can see where it goes.
 - Thumbnails are downloaded without it.
 - **Sign Out** (the account button, or the Kilo menu) deletes everything
   WebKit stores for Kilo (the session, site data, caches) and every file
-  Kilo writes. If something can't be deleted, Kilo says so and offers to
-  try again. Work still under way at that moment (a page, a thumbnail)
+  Kilo writes, copies of the cookie file included. A session that ended
+  (see below) is erased the same way. If something can't be deleted, Kilo
+  says so and offers to try again. Work still under way at that moment (a page, a thumbnail)
   writes nothing back, and what one sign-in cached is never shown to
   another.
 - Sign Out ends the session on this Mac, not at Google: ending it there
@@ -55,7 +57,11 @@ you can see where it goes.
   sign in again. Whether Google would still take a copy of the cookies
   after that week hasn't been tested, so don't count on it: signing the
   device out (above) is what's sure.
-- Cookie values never appear in Kilo's logs or debug output.
+- Cookie values never appear in Kilo's logs or debug output, and what
+  Kilo writes itself (pages, thumbnails, settings from YouTube) only your
+  account can read.
+- Kilo and its player connect only to Google's servers: YouTube's, and
+  the video caches Google places inside internet providers' networks.
 - The app is signed with the hardened runtime, so other programs can't
   inject code into it or attach to it to read its memory.
 

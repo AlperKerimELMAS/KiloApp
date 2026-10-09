@@ -122,21 +122,23 @@ pub fn remove_own_data() -> bool {
     })
 }
 
-/// Deletes the old copies of the cookie file WebKit leaves behind (it saves
-/// the file through `<file>_tmp_<pid>.dat` copies). Returns whether they're
-/// all gone: a folder or an entry that can't be read might hide one, so
-/// that counts as a failure.
+/// Deletes the copies of the cookie file the system leaves behind: WebKit
+/// saves it through `<file>_tmp_<pid>.dat` copies, and a file it can't read
+/// is set aside as `<file> - corrupt`, session and all. Any name that
+/// extends the cookie file's is one. Returns whether they're all gone: a
+/// folder or an entry that can't be read might hide one, so that counts as
+/// a failure.
 pub fn remove_cookie_copies() -> bool {
     let cookies = cookies();
     let (Some(dir), Some(name)) = (cookies.parent(), cookies.file_name().and_then(|n| n.to_str())) else { return true };
-    let copy = format!("{name}_tmp_");
+    let copy = |n: &str| n.len() > name.len() && n.starts_with(name);
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) => return e.kind() == std::io::ErrorKind::NotFound,
     };
     let failed = entries
         .map(|e| match e {
-            Ok(e) if e.file_name().to_str().is_some_and(|n| n.starts_with(&copy)) => removed(std::fs::remove_file(e.path())),
+            Ok(e) if e.file_name().to_str().is_some_and(copy) => removed(std::fs::remove_file(e.path())),
             Ok(_) => true,
             Err(_) => false,
         })
@@ -212,9 +214,19 @@ mod tests {
         // Never anywhere near the real home folder.
         assert!([cookies(), config(), caches(), webkit()].iter().all(|p| p.starts_with(&root)));
         let copy = cookies().with_file_name(format!("{BUNDLE_ID}.binarycookies_tmp_42.dat"));
+        let corrupt = cookies().with_file_name(format!("{BUNDLE_ID}.binarycookies - corrupt"));
         let other = cookies().with_file_name("com.example.other.binarycookies");
         let seen = webkit().join("WebsiteData/ResourceLoadStatistics/observations.db");
-        for file in [cookies(), config(), image_cache().join("0123"), caches().join("WebKit/cache"), seen, copy.clone(), other.clone()] {
+        for file in [
+            cookies(),
+            config(),
+            image_cache().join("0123"),
+            caches().join("WebKit/cache"),
+            seen,
+            copy.clone(),
+            corrupt.clone(),
+            other.clone(),
+        ] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(&file, b"x").unwrap();
         }
@@ -227,7 +239,7 @@ mod tests {
             std::fs::write(file, b"x").unwrap();
         }
         assert!(remove_own_data());
-        for gone in [cookies(), config(), caches(), webkit(), copy, legacy.clone()] {
+        for gone in [cookies(), config(), caches(), webkit(), copy, corrupt, legacy.clone()] {
             assert!(!gone.exists(), "{}", gone.display());
         }
         assert!(other.exists() && neighbour.exists());

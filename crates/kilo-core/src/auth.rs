@@ -130,7 +130,7 @@ const SIGN_IN_HOSTS: &[&str] = &[
 
 /// Whether the sign-in window may show `host`: one of `SIGN_IN_HOSTS`, or
 /// Google's sign-in on a country domain, which it passes through to set
-/// that domain's cookies (`accounts.google.com.tr`, say). Anything else
+/// that domain's cookies (`accounts.google.com.br`, say). Anything else
 /// opens in the browser: the window has no address bar, so it never shows
 /// a page the user can't tell apart from Google's.
 pub fn is_sign_in_host(host: &str) -> bool {
@@ -218,7 +218,7 @@ mod tests {
             "accounts.youtube.com",
             "www.youtube.com",
             "music.youtube.com",
-            "accounts.google.com.tr",
+            "accounts.google.com.br",
             "accounts.google.co.uk",
             "accounts.google.de",
             "gds.google.com",

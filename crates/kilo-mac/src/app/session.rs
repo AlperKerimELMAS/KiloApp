@@ -65,12 +65,10 @@ pub(super) fn resume() {
             }
             match session {
                 Some(session) => start(session),
+                // Its data goes, as when a session ends while Kilo runs.
+                None if ended => session_ended(),
                 None => {
-                    if ended {
-                        show_session_ended()
-                    } else {
-                        show_sign_in()
-                    }
+                    show_sign_in();
                     crate::debug::run_scenario();
                 }
             }
@@ -312,26 +310,24 @@ fn forget(a: &mut App) -> Option<PlayerProcess> {
 }
 
 /// YouTube stopped accepting the session (it expired, or was signed out
-/// elsewhere): the account is forgotten here too, and the sign-in screen
-/// says so. Its cookies stay until a new sign-in replaces them.
+/// elsewhere): the account is forgotten here too, and erased from this Mac
+/// as by Sign Out (a dead session's cookies and pages are no use to the
+/// next sign-in, which gets its own). The sign-in screen says why.
 pub(super) fn session_ended() {
-    let Some(player) = with(forget) else { return };
-    if let Some(player) = player {
-        net::spawn(move || player.quit(Duration::from_millis(500)), |()| {});
-    }
-    player::sync_timer();
-    images::purge_memory();
-    refresh_menu();
-    // A fresh window: no account photo, nothing playing.
-    rebuild_window();
-    show_session_ended();
+    erase_account(true);
 }
 
-/// Forgets the account on this Mac: stops playback, has a helper delete
-/// everything WebKit stores for Kilo (the session), deletes what Kilo wrote
-/// itself (page config, caches), and shows the sign-in screen. If anything
-/// couldn't be deleted, the screen says so and offers to try again.
+/// Sign Out: forgets the account and erases it from this Mac.
 pub fn sign_out() {
+    erase_account(false);
+}
+
+/// Forgets the account and erases it from this Mac: stops playback, has a
+/// helper delete everything WebKit stores for Kilo (the session), deletes
+/// what Kilo wrote itself (page config, caches), and shows the sign-in
+/// screen (saying the session `ended`, if it did). If anything couldn't be
+/// deleted, the screen says so and offers to try again.
+fn erase_account(ended: bool) {
     let Some(player) = with(|a| {
         if std::mem::replace(&mut a.account_busy, true) {
             return Err(()); // a sign-in or sign-out is under way
@@ -358,9 +354,14 @@ pub fn sign_out() {
             let cleared = exe.is_some_and(|exe| Command::new(exe).arg("--sign-out-helper").status().is_ok_and(|s| s.success()));
             paths::remove_own_data() && cleared
         },
-        |cleared| {
+        move |cleared| {
             with(|a| a.account_busy = false);
-            if cleared { show_sign_in() } else { show_sign_out_failed() }
+            match (cleared, ended) {
+                (false, _) => show_sign_out_failed(),
+                (true, true) => show_session_ended(),
+                (true, false) => show_sign_in(),
+            }
+            crate::debug::run_scenario();
         },
     );
 }

@@ -16,6 +16,16 @@ decisions are in [`ARCHITECTURE.md`](ARCHITECTURE.md#decisions-measured).
 
 ### Security
 
+- A session that ended is erased from the Mac as Sign Out erases one: its
+  cookies, pages and thumbnails, the page config. (They used to stay until
+  Sign Out.)
+- Sign Out also deletes the copy of the cookie file the system sets aside
+  when it can't read it (`… - corrupt`), which kept the session.
+- The sign-in window opens only links you click in the browser. A
+  redirect or frame headed elsewhere is just refused: its address may carry
+  a sign-in token.
+- Kilo's own files (pages, thumbnails, the page config) are readable by
+  your account only.
 - Sign Out waits for a page or thumbnail still being written before it
   deletes Kilo's files, so nothing of the account can come back after it.
   It also says so when it couldn't look for WebKit's leftover copies of

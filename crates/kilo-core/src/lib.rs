@@ -38,17 +38,23 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// Writes `bytes` to `path` (creating its folder) through a temporary file
-/// renamed into place: a reader, or a crash, never sees half a file.
+/// renamed into place: a reader, or a crash, never sees half a file. Only
+/// the user can read what Kilo writes (files 0600, new folders 0700): it's
+/// their account's pages and settings.
 pub fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(std::io::Error::other("not a file path"));
     };
-    std::fs::create_dir_all(dir)?;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = dir.join(format!(".{}.{}-{n}.tmp", name.to_string_lossy(), std::process::id()));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
+    // A leftover from a crash (same pid and number) would keep its mode.
+    let _ = std::fs::remove_file(&tmp);
+    let written = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?.write_all(bytes);
+    written.and_then(|()| std::fs::rename(&tmp, path)).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
 }
@@ -61,4 +67,24 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
 /// Seconds since the Unix epoch (0 if the clock is before it).
 fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn writes_are_for_the_user_only() {
+        let dir = std::env::temp_dir().join(format!("kilo-write-test-{}", std::process::id()));
+        let file = dir.join("new/page");
+        super::write_atomically(&file, b"one").unwrap();
+        super::write_atomically(&file, b"two").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"two");
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&file), 0o600);
+        assert_eq!(mode(file.parent().unwrap()), 0o700);
+        // Nothing left behind but the file.
+        assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
