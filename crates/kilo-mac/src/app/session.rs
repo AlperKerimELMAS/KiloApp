@@ -327,12 +327,18 @@ pub fn sign_out() {
 /// what Kilo wrote itself (page config, caches), and shows the sign-in
 /// screen (saying the session `ended`, if it did). If anything couldn't be
 /// deleted, the screen says so and offers to try again.
+///
+/// Not every 401 or 403 means the session is over, so one that `ended`
+/// while connected is erased only once YouTube's account check says so
+/// too; otherwise its files stay, and the next launch tries it again. (One
+/// that expired before launch was never connected, and needs no asking.)
 fn erase_account(ended: bool) {
-    let Some(player) = with(|a| {
+    let Some((player, client)) = with(|a| {
         if std::mem::replace(&mut a.account_busy, true) {
             return Err(()); // a sign-in or sign-out is under way
         }
-        Ok(forget(a))
+        let client = a.client.clone();
+        Ok((forget(a), client))
     })
     .and_then(Result::ok) else {
         return;
@@ -351,15 +357,22 @@ fn erase_account(ended: bool) {
             if let Some(player) = player {
                 player.quit(Duration::from_secs(2));
             }
+            if ended
+                && let Some(client) = client
+                && !matches!(client.account().and_then(|j| parse::account(&j)), Err(kilo_core::Error::SignedOut))
+            {
+                crate::debug::trace(|| "session: not confirmed as ended; its files stay".into());
+                return None;
+            }
             let cleared = exe.is_some_and(|exe| Command::new(exe).arg("--sign-out-helper").status().is_ok_and(|s| s.success()));
-            paths::remove_own_data() && cleared
+            Some(paths::remove_own_data() && cleared)
         },
-        move |cleared| {
+        move |erased| {
             with(|a| a.account_busy = false);
-            match (cleared, ended) {
-                (false, _) => show_sign_out_failed(),
-                (true, true) => show_session_ended(),
-                (true, false) => show_sign_in(),
+            match (erased, ended) {
+                (Some(false), _) => show_sign_out_failed(),
+                (None, _) | (Some(true), true) => show_session_ended(),
+                (Some(true), false) => show_sign_in(),
             }
             crate::debug::run_scenario();
         },

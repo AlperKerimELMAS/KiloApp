@@ -42,10 +42,10 @@ browser, where you can see where it goes. Anything else headed elsewhere
 - **Sign Out** (the account button, or the Kilo menu) deletes everything
   WebKit stores for Kilo (the session, site data, caches) and every file
   Kilo writes, copies of the cookie file included. A session that ended
-  (see below) is erased the same way. If something can't be deleted, Kilo
-  says so and offers to try again. Work still under way at that moment (a page, a thumbnail)
-  writes nothing back, and what one sign-in cached is never shown to
-  another.
+  (see below) is erased the same way, once YouTube confirms it's over. If
+  something can't be deleted, Kilo says so and offers to try again. Work
+  still under way at that moment (a page, a thumbnail) writes nothing
+  back, and what one sign-in cached is never shown to another.
 - Sign Out ends the session on this Mac, not at Google: ending it there
   takes Google's own cookies, which Kilo doesn't keep (YouTube's sign-out
   without them was tested, and leaves the session working). To end it
@@ -93,8 +93,9 @@ browser, where you can see where it goes. Anything else headed elsewhere
   can read it, and with it act on your YouTube account. Google's own
   cookies (for Gmail, Drive…) aren't in it, but YouTube's still belong to
   your Google account's sign-in: treat the file like a password, and if it
-  may have been copied, end the session at Google (above). Chrome encrypts its cookies with a key in the Keychain;
-  Safari keeps them in a container macOS protects. Both rely on the app
+  may have been copied, end the session at Google (above). Chrome
+  encrypts its cookies with a key in the Keychain; Safari keeps them in a
+  container macOS protects. Both rely on the app
   having a stable code signature, which ad-hoc builds don't: each build
   would have to ask for your Mac password to read the session. Encrypting
   it comes with Developer ID signing.

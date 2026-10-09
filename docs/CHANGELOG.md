@@ -16,9 +16,9 @@ decisions are in [`ARCHITECTURE.md`](ARCHITECTURE.md#decisions-measured).
 
 ### Security
 
-- A session that ended is erased from the Mac as Sign Out erases one: its
-  cookies, pages and thumbnails, the page config. (They used to stay until
-  Sign Out.)
+- A session that ended is erased from the Mac as Sign Out erases one, once
+  YouTube's account check confirms it's over: its cookies, pages and
+  thumbnails, the page config. (They used to stay until Sign Out.)
 - Sign Out also deletes the copy of the cookie file the system sets aside
   when it can't read it (`… - corrupt`), which kept the session.
 - The sign-in window opens only links you click in the browser. A

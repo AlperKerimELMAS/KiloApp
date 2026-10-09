@@ -247,7 +247,9 @@ of the account in memory, bumps every token above, and starts a new
 WebKit's stores for Kilo, and `paths::remove_own_data` deletes Kilo's own
 files and any copy of the cookie file the system left (`_tmp_` saves, a
 `- corrupt` one set aside). A dead session's data is no use to the next
-sign-in, which gets its own. If anything couldn't be deleted, the screen
+sign-in, which gets its own; but not every 401 or 403 means the session is
+over, so one that ended while connected is erased only once the account
+check says so too. If anything couldn't be deleted, the screen
 says so and offers to try again.
 
 ### The window
