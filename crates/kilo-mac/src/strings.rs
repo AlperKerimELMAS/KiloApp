@@ -48,6 +48,8 @@ strings! {
     WelcomeBody => "Sign in with your YouTube Music Premium account to start listening.", "Dinlemeye başlamak için YouTube Music Premium hesabınızla oturum açın.";
     SignInWithGoogle => "Sign in with Google", "Google ile oturum aç";
     SignInNote => "You sign in on Google's own page. Kilo never sees your password.", "Google'ın kendi sayfasında oturum açarsınız. Kilo şifrenizi asla görmez.";
+    SessionEnded => "Sign in again", "Yeniden oturum açın";
+    SessionEndedBody => "Your session has ended: YouTube keeps Kilo signed in for a week at most. Sign in again to keep listening.", "Oturumunuz sona erdi: YouTube, Kilo'nun oturumunu en fazla bir hafta açık tutar. Dinlemeye devam etmek için yeniden oturum açın.";
     SigningIn => "Signing in…", "Oturum açılıyor…";
     SigningInBody => "Finish signing in in the window that opened.", "Açılan pencerede oturum açmayı tamamlayın.";
     SignInWindow => "Sign in to YouTube Music", "YouTube Music'te oturum açın";

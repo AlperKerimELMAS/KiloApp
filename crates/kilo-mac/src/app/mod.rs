@@ -48,7 +48,9 @@ pub use browse::{Route, activate, back, go, play_item, reload, scroll_by, scroll
 pub use dev::{bench_relayout, choose, describe, describe_keys, scroll_shelf, snapshot};
 pub use player::{change_volume, is_muted, next, play_pause, previous, seek, seek_by, set_volume, toggle_mute};
 pub use queue::{play_all, play_music_video, play_video};
-use screens::{message, set_content, show_empty, show_error, show_loading, show_sign_in, show_sign_out_failed, show_signing_out};
+use screens::{
+    message, set_content, show_empty, show_error, show_loading, show_session_ended, show_sign_in, show_sign_out_failed, show_signing_out,
+};
 pub use session::{cancel_sign_in, sign_in, sign_out};
 pub use sidebar::{sidebar_frame, toggle_sidebar};
 
@@ -66,6 +68,8 @@ enum Screen {
     Page,
     Loading,
     SignIn,
+    /// Signed in before, but YouTube no longer takes the session.
+    SessionEnded,
     SigningIn,
     SigningOut,
     SignOutFailed,
@@ -355,6 +359,7 @@ fn restore_screen(scrolled: f64) {
         (Screen::Page, Some(page)) => browse::show_page_at(page, scrolled),
         (Screen::Loading | Screen::Page, _) => show_loading(),
         (Screen::SignIn, _) => show_sign_in(),
+        (Screen::SessionEnded, _) => show_session_ended(),
         (Screen::SigningIn, _) => session::show_signing_in(),
         (Screen::SigningOut, _) => show_signing_out(),
         (Screen::SignOutFailed, _) => show_sign_out_failed(),

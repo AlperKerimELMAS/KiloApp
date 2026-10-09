@@ -10,14 +10,16 @@
 //! kilo-probe: while playing, while paused, and after the web view is torn
 //! down. Playback only starts on a signed-in account (Premium-only rule).
 //!
-//! A lab, not the app, and without the app's protections: `login` keeps
-//! the whole Google account session in this binary's own WebKit store (on
-//! disk, keyed by the bundle it runs in), its sign-in window isn't limited
-//! to Google's pages, and its browser identity is a fixed Safari version.
-//! Delete its WebKit data when you're done measuring.
+//! A lab, not the app. Like the app, `login` keeps only YouTube's cookies,
+//! in this binary's own WebKit store (on disk, keyed by the bundle it runs
+//! in; Google's account session stays in the window's memory). Unlike the
+//! app, its sign-in window isn't limited to Google's pages, and its browser
+//! identity is a fixed Safari version. Delete its WebKit data when you're
+//! done measuring.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use block2::RcBlock;
@@ -30,6 +32,7 @@ use objc2_foundation::{NSArray, NSError, NSHTTPCookie, NSPoint, NSRect, NSSize, 
 use objc2_web_kit::{
     WKAudiovisualMediaTypes, WKContentRuleList, WKContentRuleListStore, WKInactiveSchedulingPolicy, WKScriptMessage,
     WKScriptMessageHandler, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration,
+    WKWebsiteDataStore,
 };
 
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
@@ -213,6 +216,8 @@ struct State {
     playing_footprints: Vec<u64>,
     report: Vec<String>,
     signed_in_at: Option<Instant>,
+    /// Signed in, and copying YouTube's cookies to the store.
+    keeping: bool,
 }
 
 thread_local! {
@@ -361,10 +366,15 @@ fn main() {
         playing_footprints: Vec::new(),
         report,
         signed_in_at: None,
+        keeping: false,
     }));
 
     let config = make_config(mtm, lean, lockdown, sched, profile, strip);
     if login {
+        // Google's whole account session stays in the window's memory; only
+        // YouTube's cookies are kept (`keep_youtube_cookies`), as in the app.
+        // SAFETY: main-thread WebKit calls.
+        unsafe { config.setWebsiteDataStore(&WKWebsiteDataStore::nonPersistentDataStore(mtm)) };
         start_web_view(mtm, &config, SIGN_IN_URL);
     } else {
         // Premium-only: refuse to load a watch page (which autoplays, with
@@ -697,9 +707,9 @@ fn finish_playing(now: Sample) {
 fn tick_signing_in(web_view: Option<Retained<WKWebView>>) {
     let Some(web_view) = web_view else { return };
     if let Some(at) = with_state(|s| s.signed_in_at) {
-        if at.elapsed() > Duration::from_secs(3) {
-            println!("signed in; cookies are stored in this app's WebKit data store");
-            std::process::exit(0);
+        // Let the redirect chain finish setting cookies, then keep them (once).
+        if at.elapsed() > Duration::from_secs(3) && !with_state(|s| std::mem::replace(&mut s.keeping, true)) {
+            keep_youtube_cookies(&web_view);
         }
         return;
     }
@@ -718,6 +728,39 @@ fn tick_signing_in(web_view: Option<Retained<WKWebView>>) {
             log("signed in to YouTube Music");
         }
     });
+}
+
+/// Signed in: copies YouTube's cookies, and only those, from the window's
+/// memory into this binary's WebKit store, where `play` finds them, then
+/// exits (WebKit writes its cookie file as the process exits).
+fn keep_youtube_cookies(web_view: &WKWebView) {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
+        // SAFETY: WebKit passes a valid array for the duration of the call.
+        let cookies = unsafe { cookies.as_ref() };
+        let youtube: Vec<Retained<NSHTTPCookie>> = cookies.iter().filter(|c| is_youtube_domain(&c.domain().to_string())).collect();
+        if youtube.is_empty() {
+            eprintln!("no YouTube cookies to keep");
+            std::process::exit(1);
+        }
+        // SAFETY: main-thread WebKit call.
+        let store = unsafe { WKWebsiteDataStore::defaultDataStore(mtm).httpCookieStore() };
+        let left = Rc::new(Cell::new(youtube.len()));
+        for cookie in &youtube {
+            let left = left.clone();
+            let saved = RcBlock::new(move || {
+                left.set(left.get() - 1);
+                if left.get() == 0 {
+                    println!("signed in; YouTube's cookies are stored in this app's WebKit data store");
+                    std::process::exit(0);
+                }
+            });
+            // SAFETY: main-thread WebKit call with a live cookie.
+            unsafe { store.setCookie_completionHandler(cookie, Some(&saved)) };
+        }
+    });
+    // SAFETY: main-thread WebKit calls.
+    unsafe { web_view.configuration().websiteDataStore().httpCookieStore().getAllCookies(&done) };
 }
 
 /// Extracts a scalar field from our own flat JSON status string.

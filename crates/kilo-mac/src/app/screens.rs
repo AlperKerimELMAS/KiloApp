@@ -98,6 +98,20 @@ pub(super) fn show_sign_in() {
     message(Screen::SignIn, true, t(S::Welcome), t(S::WelcomeBody), &[(t(S::SignInWithGoogle), sel!(signIn:), true)], t(S::SignInNote));
 }
 
+/// The sign-in screen for someone whose session ended (it lasts a week at
+/// most: Google gives youtube.com's copy of it 7 days).
+pub(super) fn show_session_ended() {
+    with_shell(|s| shell::select_nav(s, None));
+    message(
+        Screen::SessionEnded,
+        true,
+        t(S::SessionEnded),
+        t(S::SessionEndedBody),
+        &[(t(S::SignInWithGoogle), sel!(signIn:), true)],
+        t(S::SignInNote),
+    );
+}
+
 pub(super) fn show_empty() {
     message(Screen::Empty, false, t(S::NothingHere), t(S::NothingHereBody), &[], "");
 }

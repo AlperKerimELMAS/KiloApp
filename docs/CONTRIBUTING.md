@@ -191,9 +191,10 @@ Things that cost us time, mostly macOS behavior that isn't obvious:
   page-loading workers (`net::run`).
 - **An account's data has boundaries.** Signing out, or a session YouTube
   stopped accepting, goes through `session::forget`; disk writes from
-  background work go through `paths::write_if_current` with the epoch taken
-  when the work started; completions check that the session is still the
-  same.
+  background work go through `paths::write_if_current` (or
+  `paths::if_current`) with the epoch taken when the work started, so
+  deleting the account's files waits for them; completions check that the
+  session is still the same.
 - **WebKit writes cookies to disk only when its process exits.** A helper
   that sets cookies must exit before anyone reads the file.
 - **A web view plays media only while it's in a window,** so the player

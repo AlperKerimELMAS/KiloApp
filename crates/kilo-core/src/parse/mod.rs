@@ -39,6 +39,7 @@ pub fn account_mask() -> &'static str {
 /// The signed-in account, from an account menu answer.
 pub fn account(json: &[u8]) -> Result<Account> {
     let r: AccountResponse = serde_json::from_slice(json).map_err(|e| Error::Parse(e.to_string()))?;
+    signed_in(&r.response_context)?;
     let h = r
         .actions
         .into_iter()
@@ -51,10 +52,24 @@ pub fn account(json: &[u8]) -> Result<Account> {
     })
 }
 
+/// `Error::SignedOut` if the server answered as to a signed-out visitor.
+/// Once YouTube stops taking a session (it expired, or was signed out at
+/// Google), it says so only there: the answer is a guest's, with no error.
+fn signed_in(context: &Option<ResponseContext>) -> Result<()> {
+    let signed_out = context
+        .iter()
+        .flat_map(|c| &c.service_tracking_params)
+        .filter(|s| s.service == "GFEEDBACK")
+        .flat_map(|s| &s.params)
+        .any(|p| p.key == "logged_in" && p.value == "0");
+    if signed_out { Err(Error::SignedOut) } else { Ok(()) }
+}
+
 /// A browse page: home, explore, library, album, playlist, artist, or a
 /// continuation of one.
 pub fn browse(json: &[u8]) -> Result<Page> {
     let r: BrowseResponse = serde_json::from_slice(json).map_err(|e| Error::Parse(e.to_string()))?;
+    signed_in(&r.response_context)?;
     let mut page = Page::default();
     if let Some(h) = &r.header {
         page.header = header(h);
@@ -107,6 +122,7 @@ pub fn browse(json: &[u8]) -> Result<Page> {
 /// Search results.
 pub fn search(json: &[u8]) -> Result<Page> {
     let r: SearchResponse = serde_json::from_slice(json).map_err(|e| Error::Parse(e.to_string()))?;
+    signed_in(&r.response_context)?;
     let mut page = Page::default();
     let tab = r.contents.and_then(|c| c.tabbed_search_results_renderer).and_then(|t| t.tabs.into_iter().next());
     if let Some(list) = tab.and_then(|t| t.tab_renderer.content).and_then(|c| c.section_list_renderer) {
@@ -592,8 +608,24 @@ mod tests {
         assert_eq!((&*a.name, &*a.handle), ("Ada", "@ada"));
         assert_eq!(
             account_mask(),
-            "actions(openPopupAction(popup(multiPageMenuRenderer(header(activeAccountHeaderRenderer(accountName(runs(text)),channelHandle(runs(text)),accountPhoto(thumbnails(url,width,height))))))))"
+            "responseContext(serviceTrackingParams(service,params(key,value))),actions(openPopupAction(popup(multiPageMenuRenderer(header(activeAccountHeaderRenderer(accountName(runs(text)),channelHandle(runs(text)),accountPhoto(thumbnails(url,width,height))))))))"
         );
+    }
+
+    #[test]
+    fn a_guest_answer_means_the_session_is_gone() {
+        let context = |logged_in: &str| {
+            format!(
+                r#"{{"responseContext":{{"serviceTrackingParams":[{{"service":"CSI","params":[{{"key":"yt_li","value":"{logged_in}"}}]}},{{"service":"GFEEDBACK","params":[{{"key":"logged_in","value":"{logged_in}"}}]}}]}}"#
+            )
+        };
+        let guest = context("0");
+        assert!(matches!(browse(format!("{guest}}}").as_bytes()), Err(Error::SignedOut)));
+        assert!(matches!(search(format!("{guest}}}").as_bytes()), Err(Error::SignedOut)));
+        assert!(matches!(account(format!(r#"{guest},"actions":[]}}"#).as_bytes()), Err(Error::SignedOut)));
+        // Signed in, or not said: a page as usual.
+        assert!(browse(format!("{}}}", context("1")).as_bytes()).is_ok());
+        assert!(browse(br#"{"contents":{}}"#).is_ok());
     }
 
     #[test]

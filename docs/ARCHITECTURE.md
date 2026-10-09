@@ -84,7 +84,7 @@ nothing if the token has moved on:
 | `player_serial` | a helper is started, or the account is let go of | events from a helper that has been replaced |
 | `idle_token` | playback starts | an idle shutdown that's no longer due |
 | `session` | the account is let go of (`session::forget`) | connecting, the account's name and photo, more of a page |
-| `paths::epoch` | the account is let go of | disk writes from work started before (`paths::write_if_current`) |
+| `paths::epoch` | the account is let go of | disk writes from work started before (`paths::write_if_current`; deleting the account's files waits for writes under way) |
 
 ### Launch
 
@@ -215,8 +215,9 @@ player, set up for the smallest footprint measured:
 
 **Signing in** (`app/session.rs`, `login.rs`): the login helper opens
 Google's sign-in page in a window with no address bar, so it only shows
-Google's and YouTube's pages over https (anything else opens in the
-browser), and names the page's host in its title bar. The window's
+the hosts Google's sign-in uses (`kilo_core::auth::is_sign_in_host`, an
+exact list), over https (anything else opens in the browser), and names
+the page's host in its title bar. The window's
 WebKit store lives in memory only, so the Google account session that
 signing in creates never touches the disk. Once music.youtube.com says the
 user is signed in, the helper copies YouTube's cookies, and only those,
@@ -228,12 +229,19 @@ app waits for the file (`login::wait_until_saved`) before it connects.
 apply to music.youtube.com. Each API request carries them and the
 `SAPISIDHASH` signature YouTube's own web client sends, and goes only to
 music.youtube.com. Redirects never carry them. `Session::fingerprint`
-tells sign-ins apart for the page cache's file names.
+tells sign-ins apart for the page cache's file names. It lasts a week at
+most: Google gives youtube.com's copies of the session cookies 7 days
+(its own get 400), and renews them only from its own, which Kilo doesn't
+keep.
 
 **Letting go of an account** happens two ways. When YouTube stops accepting
-the session (a 401 or 403, or the helper finding itself signed out),
-`session::session_ended` forgets the account: `session::forget` clears
-everything of it in memory, bumps every token above, and starts a new
+the session, `session::session_ended` forgets the account and shows "Sign
+in again". YouTube rarely says so with a 401 or 403: it answers as to a
+guest, `logged_in` 0 in the answer's `responseContext`, which the parsers
+turn into `Error::SignedOut` (browse, search, and the account menu, asked
+at every connect); the player page's `LOGGED_IN` false makes the helper
+say `signed-out` instead of `player`. To forget the account,
+`session::forget` clears everything of it in memory, bumps every token above, and starts a new
 `paths::epoch`. **Sign Out** does the same, then stops the player helper,
 has the sign-out helper empty WebKit's stores for Kilo, and deletes Kilo's
 own files (`paths::remove_own_data`). If anything couldn't be deleted, the

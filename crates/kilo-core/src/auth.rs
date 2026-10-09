@@ -6,7 +6,7 @@
 
 use crate::unix_now;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Cookie {
     pub domain: String,
     pub name: String,
@@ -15,10 +15,29 @@ pub struct Cookie {
     pub expires: f64,
 }
 
+/// Without the value: a cookie printed by mistake (a log, a test failure)
+/// never shows the session.
+impl std::fmt::Debug for Cookie {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cookie")
+            .field("domain", &self.domain)
+            .field("name", &self.name)
+            .field("expires", &self.expires)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The cookies that apply to music.youtube.com.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Session {
     cookies: Vec<(String, String)>,
+}
+
+/// Only how many cookies there are, like `Cookie`'s.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session").field("cookies", &self.cookies.len()).finish_non_exhaustive()
+    }
 }
 
 impl Session {
@@ -92,15 +111,31 @@ pub fn is_youtube_domain(domain: &str) -> bool {
     under(domain, "youtube.com")
 }
 
-/// Whether the sign-in window may show `host`: Google's sign-in and the
-/// YouTube pages it leads back to (any google.com or youtube.com host), and
-/// Google's country domains, which sign-in may pass through to set their
-/// cookies (`accounts.google.com.br`, say). Anything else opens in the
-/// browser: the window has no address bar, so it never shows a page the
-/// user can't tell apart from Google's.
+/// The hosts Google's sign-in passes through (seen in a real sign-in), and
+/// the Google pages it can stop at on the way: cookie consent, account
+/// checks ("confirm your recovery email") and the "unusual traffic" check.
+/// Exact names: google.com also has hosts where anyone can publish a page
+/// (Sites, Docs…), which could imitate the sign-in page.
+const SIGN_IN_HOSTS: &[&str] = &[
+    "accounts.google.com",
+    "accounts.youtube.com",
+    "www.youtube.com",
+    "music.youtube.com",
+    "consent.google.com",
+    "consent.youtube.com",
+    "gds.google.com",
+    "myaccount.google.com",
+    "www.google.com",
+];
+
+/// Whether the sign-in window may show `host`: one of `SIGN_IN_HOSTS`, or
+/// Google's sign-in on a country domain, which it passes through to set
+/// that domain's cookies (`accounts.google.com.tr`, say). Anything else
+/// opens in the browser: the window has no address bar, so it never shows
+/// a page the user can't tell apart from Google's.
 pub fn is_sign_in_host(host: &str) -> bool {
     let host = host.to_ascii_lowercase();
-    if under(&host, "google.com") || under(&host, "youtube.com") {
+    if SIGN_IN_HOSTS.contains(&host.as_str()) {
         return true;
     }
     let Some(tld) = host.strip_prefix("accounts.google.") else { return false };
@@ -180,12 +215,13 @@ mod tests {
         for h in [
             "accounts.google.com",
             "Accounts.Google.com",
-            "google.com",
             "accounts.youtube.com",
+            "www.youtube.com",
             "music.youtube.com",
-            "accounts.google.com.br",
+            "accounts.google.com.tr",
             "accounts.google.co.uk",
             "accounts.google.de",
+            "gds.google.com",
         ] {
             assert!(is_sign_in_host(h), "{h}");
         }
@@ -196,9 +232,24 @@ mod tests {
             "accounts.google.evil",
             "accounts.google.co.evil",
             "login.example.com",
+            // Anyone can publish pages there.
+            "sites.google.com",
+            "docs.google.com",
+            "script.google.com",
+            // Help and policies: the browser shows them, with an address bar.
+            "support.google.com",
             "",
         ] {
             assert!(!is_sign_in_host(h), "{h}");
+        }
+    }
+
+    #[test]
+    fn debug_output_never_shows_the_session() {
+        let cookie = Cookie { domain: ".youtube.com".into(), name: "SAPISID".into(), value: "s3cret".into(), expires: 0.0 };
+        let session = Session::from_cookies(std::slice::from_ref(&cookie)).unwrap();
+        for printed in [format!("{cookie:?}"), format!("{session:?}")] {
+            assert!(!printed.contains("s3cret"), "{printed}");
         }
     }
 

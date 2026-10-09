@@ -72,6 +72,7 @@ macro_rules! raw {
 
 raw! {
     struct BrowseResponse {
+        response_context: Option<ResponseContext>,
         header: Option<HeaderRenderers>,
         contents: Option<Contents>,
         continuation_contents: Option<ContinuationContents>,
@@ -209,16 +210,22 @@ raw! {
     }
     struct ContinuationData { continuation: String }
 
-    struct SearchResponse { contents: Option<SearchContents> }
+    struct SearchResponse { response_context: Option<ResponseContext>, contents: Option<SearchContents> }
     struct SearchContents { tabbed_search_results_renderer: Option<Tabs> }
 
-    struct AccountResponse { actions: Vec<AccountAction> }
+    struct AccountResponse { response_context: Option<ResponseContext>, actions: Vec<AccountAction> }
     struct AccountAction { open_popup_action: Option<OpenPopup> }
     struct OpenPopup { popup: Popup }
     struct Popup { multi_page_menu_renderer: Option<MultiPageMenu> }
     struct MultiPageMenu { header: Option<MenuHeader> }
     struct MenuHeader { active_account_header_renderer: Option<AccountHeader> }
     struct AccountHeader { account_name: Text, channel_handle: Text, account_photo: ThumbnailList }
+
+    /// What the server says about the request, whether it took the session
+    /// among it (`GFEEDBACK`'s `logged_in`).
+    struct ResponseContext { service_tracking_params: Vec<TrackingService> }
+    struct TrackingService { service: String, params: Vec<TrackingParam> }
+    struct TrackingParam { key: String, value: String }
 
     struct NextResponse { contents: Option<NextContents>, continuation_contents: Option<NextContinuation> }
     /// The fields of a first "up next" answer (its field mask).

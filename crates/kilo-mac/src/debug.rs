@@ -35,9 +35,10 @@
 //!     PHASE being `maybegin`, `began`, `changed`, `ended`, or `none` for a
 //!     mouse wheel; logs where the page and the shelf are scrolled to).
 //!   - App: `app` (logs whether Kilo is active and owns the menu bar),
-//!     `front` (logs the frontmost app), `signin` and `cancelsignin` (only
-//!     in a copy with another bundle id: the real one's helpers use your
-//!     own session; `docs/CONTRIBUTING.md` says how to make one).
+//!     `front` (logs the frontmost app), `signin`, `cancelsignin` and
+//!     `signout` (only in a copy with another bundle id: the real one's
+//!     helpers use your own session; `docs/CONTRIBUTING.md` says how to
+//!     make one).
 //!   - `wait:SECS`.
 
 use std::cell::Cell;
@@ -357,6 +358,10 @@ fn step(steps: Vec<String>, i: usize) {
         }
         "cancelsignin" => {
             crate::app::cancel_sign_in();
+            0.0
+        }
+        "signout" => {
+            crate::app::sign_out();
             0.0
         }
         "front" => {

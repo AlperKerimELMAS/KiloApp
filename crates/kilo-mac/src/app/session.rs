@@ -22,8 +22,8 @@ use objc2::sel;
 
 use super::browse::{Route, go};
 use super::{
-    App, Screen, bring_to_front, message, player, rebuild_window, refresh_menu, reload, show_error, show_loading, show_sign_in,
-    show_sign_out_failed, show_signing_out, with,
+    App, Screen, bring_to_front, message, player, rebuild_window, refresh_menu, reload, show_error, show_loading, show_session_ended,
+    show_sign_in, show_sign_out_failed, show_signing_out, with,
 };
 use crate::strings::{S, t};
 use crate::{images, login, net, paths, settings, ui};
@@ -40,6 +40,8 @@ static LOGIN_ATTEMPT: AtomicU64 = AtomicU64::new(0);
 pub(super) fn resume() {
     let cookies = std::fs::read(paths::cookies()).ok().and_then(|data| parse_binary_cookies(&data)).unwrap_or_default();
     let session = Session::from_cookies(&cookies);
+    // YouTube's cookies, but no session in them: it expired.
+    let ended = session.is_none() && cookies.iter().any(|c| is_youtube_domain(&c.domain) && c.name == "LOGIN_INFO");
     let legacy = cookies.iter().any(|c| !is_youtube_domain(&c.domain));
     let Some(id) = with(|a| a.session) else { return };
     if legacy {
@@ -64,7 +66,11 @@ pub(super) fn resume() {
             match session {
                 Some(session) => start(session),
                 None => {
-                    show_sign_in();
+                    if ended {
+                        show_session_ended()
+                    } else {
+                        show_sign_in()
+                    }
                     crate::debug::run_scenario();
                 }
             }
@@ -129,9 +135,7 @@ pub(super) fn start(session: Session) {
 /// Saves the page config for the next launch, unless the account it was
 /// read for has been let go of (`paths::epoch`).
 fn save_config(config: &Config, epoch: u64) {
-    if epoch == paths::epoch() {
-        let _ = config.save(&paths::config());
-    }
+    paths::if_current(epoch, || config.save(&paths::config()).is_ok());
 }
 
 /// Reads music.youtube.com's page config again, for the next launch.
@@ -155,15 +159,20 @@ fn fetch_account() {
     net::run(
         net::Pool::Api,
         move || client.account().and_then(|j| parse::account(&j)),
-        move |result| match result {
-            Ok(account) => {
-                if with(|a| a.session) != Some(id) {
-                    return; // signed out meanwhile
-                }
-                with(|a| a.account = Some(account));
-                show_account();
+        move |result| {
+            if with(|a| a.session) != Some(id) {
+                return; // signed out meanwhile
             }
-            Err(e) => eprintln!("kilo: account: {e}"),
+            match result {
+                Ok(account) => {
+                    with(|a| a.account = Some(account));
+                    show_account();
+                }
+                // Asked at every connect, so a session YouTube no longer
+                // takes is noticed even when Home comes from the cache.
+                Err(kilo_core::Error::SignedOut) => session_ended(),
+                Err(e) => eprintln!("kilo: account: {e}"),
+            }
         },
     );
 }
@@ -304,7 +313,7 @@ fn forget(a: &mut App) -> Option<PlayerProcess> {
 
 /// YouTube stopped accepting the session (it expired, or was signed out
 /// elsewhere): the account is forgotten here too, and the sign-in screen
-/// shows. Its cookies stay until a new sign-in replaces them.
+/// says so. Its cookies stay until a new sign-in replaces them.
 pub(super) fn session_ended() {
     let Some(player) = with(forget) else { return };
     if let Some(player) = player {
@@ -315,7 +324,7 @@ pub(super) fn session_ended() {
     refresh_menu();
     // A fresh window: no account photo, nothing playing.
     rebuild_window();
-    show_sign_in();
+    show_session_ended();
 }
 
 /// Forgets the account on this Mac: stops playback, has a helper delete

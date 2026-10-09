@@ -41,12 +41,15 @@ const PAGE_CSS: &str = "*,*::before,*::after{animation:none!important;transition
 
 /// Page-world bridge. Media events go to the helper as one-line messages;
 /// `__kilo` drives YouTube's player through its own API. `player` says that
-/// API is there: until then, the helper holds its commands.
+/// API is there: until then, the helper holds its commands. `signed-out`
+/// says it's there for a guest (the page's config says so): the session is
+/// gone, and nothing may play.
 const BRIDGE: &str = r#"(() => {
   const post = (m) => { try { webkit.messageHandlers.kilo.postMessage(m); } catch (e) {} };
   let video = null, player = null, ready = false;
+  const guest = () => { try { return window.ytcfg.get('LOGGED_IN') === false; } catch (e) { return false; } };
   const readyCheck = () => {
-    if (!ready && player && typeof player.loadVideoById === 'function') { ready = true; post('player'); }
+    if (!ready && player && typeof player.loadVideoById === 'function') { ready = true; post(guest() ? 'signed-out' : 'player'); }
   };
   const id = () => { try { return player.getVideoData().video_id || '-'; } catch (e) { return '-'; } };
   const report = (kind) => {
@@ -426,6 +429,12 @@ fn on_page_message(msg: &str) {
     let (kind, rest) = msg.split_once(' ').unwrap_or((msg, ""));
     match kind {
         "player" => player_ready(),
+        // Not a guest's playback (it would play ads): paused, and the
+        // commands that waited never run. Kilo stops the helper.
+        "signed-out" => {
+            js("__kilo.pause()");
+            emit(&Event::SignedOut);
+        }
         "ad" => {
             js("__kilo.pause()");
             emit(&Event::AdShowing);

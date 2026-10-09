@@ -22,9 +22,11 @@ prebuilt releases yet: update by building the latest code.
 **Your password.** You sign in on Google's own page, in a system web view.
 Kilo never sees or stores your password.
 
-**The sign-in window.** It has no address bar, so it only shows Google's and
-YouTube's pages, over https, and names the page's host in its title bar.
-Any other link opens in your browser, where you can see where it goes.
+**The sign-in window.** It has no address bar, so it only shows the pages
+Google's sign-in uses (an exact list of hosts), over https, and names the
+page's host in its title bar. Any other link, including the rest of
+google.com, where anyone can publish a page, opens in your browser, where
+you can see where it goes.
 
 **Your session.**
 - Signing in creates your whole Google account session. Kilo keeps it in the
@@ -42,6 +44,18 @@ Any other link opens in your browser, where you can see where it goes.
   try again. Work still under way at that moment (a page, a thumbnail)
   writes nothing back, and what one sign-in cached is never shown to
   another.
+- Sign Out ends the session on this Mac, not at Google: ending it there
+  takes Google's own cookies, which Kilo doesn't keep (YouTube's sign-out
+  without them was tested, and leaves the session working). To end it
+  there too (if the cookie file may have been copied, say), sign that
+  device out in your Google Account: **Security → Your devices**. Kilo
+  notices and asks you to sign in again.
+- The session lasts a week at most: Google gives YouTube's copy of it 7
+  days, and only Google's own cookies can renew it. Then Kilo asks you to
+  sign in again. Whether Google would still take a copy of the cookies
+  after that week hasn't been tested, so don't count on it: signing the
+  device out (above) is what's sure.
+- Cookie values never appear in Kilo's logs or debug output.
 - The app is signed with the hardened runtime, so other programs can't
   inject code into it or attach to it to read its memory.
 
@@ -70,8 +84,10 @@ Any other link opens in your browser, where you can see where it goes.
   cookie file,
   `~/Library/HTTPStorages/io.github.alperkerimelmas.kilo.binarycookies`.
   Other accounts on the Mac can't reach it, but any program running as you
-  can read it, and with it act on your YouTube account. (Your Google account
-  session isn't in it.) Chrome encrypts its cookies with a key in the Keychain;
+  can read it, and with it act on your YouTube account. Google's own
+  cookies (for Gmail, Drive…) aren't in it, but YouTube's still belong to
+  your Google account's sign-in: treat the file like a password, and if it
+  may have been copied, end the session at Google (above). Chrome encrypts its cookies with a key in the Keychain;
   Safari keeps them in a container macOS protects. Both rely on the app
   having a stable code signature, which ad-hoc builds don't: each build
   would have to ask for your Mac password to read the session. Encrypting
@@ -79,6 +95,7 @@ Any other link opens in your browser, where you can see where it goes.
 - Builds are signed ad hoc, not with a Developer ID, and aren't notarized.
   Build Kilo yourself, or only run a build you trust.
 - The measurement lab `kilo-spike-web` (not part of the app) has a `login`
-  command that keeps a whole Google account session in its own WebKit
-  store, without the app's protections. It's a development tool: use it
-  only if you know why, and delete its data afterwards.
+  command that, like the app, keeps YouTube's cookies in its own WebKit
+  store, but its sign-in window isn't limited to Google's pages. It's a
+  development tool: use it only if you know why, and delete its data
+  afterwards.

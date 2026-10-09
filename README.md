@@ -105,7 +105,8 @@ To update, pull and run the same command again.
 
 - **Signing in:** the welcome screen's button opens Google's own sign-in
   page, in a window of its own. If Google answers "This browser or app may
-  not be secure", choose Try again: it usually goes through.
+  not be secure", choose Try again: it usually goes through. Kilo asks you
+  to sign in again about once a week (see Questions).
 - **The account button** (top right) shows who's signed in, and has
   Appearance (System, Light, Dark), Language (System, English, Türkçe) and
   Sign Out. Appearance and Language are also in the View menu, and Sign
@@ -160,13 +161,14 @@ decision: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 ## Privacy and security
 
 - You sign in on Google's own page, in a system web view. Kilo never sees
-  your password, and stores only YouTube's cookies, not your Google
-  account session.
+  your password, and stores only YouTube's cookies, not Google's (for
+  Gmail, Drive…).
 - Kilo talks only to YouTube and Google, and adds no telemetry of its own.
   (YouTube's player reports what you play to YouTube, as it does on the
   website.)
 - **Sign Out** (the account button, or the Kilo menu) deletes your session
-  and everything Kilo stored.
+  and everything Kilo stored on this Mac. To end the session at Google
+  too, see [`docs/SECURITY.md`](docs/SECURITY.md).
 - On disk, for the bundle id `io.github.alperkerimelmas.kilo`:
   - your session, in WebKit's cookie store
     (`~/Library/HTTPStorages/io.github.alperkerimelmas.kilo.binarycookies`);
@@ -208,6 +210,11 @@ the playing. That's a deliberate line, not a missing feature.
 **Will there be a Windows or Linux version?** No. Kilo is made for the Mac:
 its UI is native AppKit, and it leans on what macOS already has (WebKit,
 ImageIO, the system's TLS) instead of bringing its own.
+
+**Why does Kilo ask me to sign in again every week?** Kilo keeps only
+YouTube's cookies, never your Google account's (Gmail, Drive…), and Google
+gives YouTube's a week. Renewing them would take your Google account's
+cookies on disk, so Kilo asks instead.
 
 **Why are there two "Kilo" processes in Activity Monitor?** While music
 plays, the second one is the player helper. It exists only while you play,

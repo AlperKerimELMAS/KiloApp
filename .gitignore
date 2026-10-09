@@ -5,6 +5,15 @@
 # Samples kilo-probe writes with --csv.
 *.csv
 
+# Never a session: WebKit's cookie files (and the copies it saves them
+# through), environment files, and logs or captures from a signed-in run.
+*.binarycookies
+*.binarycookies_tmp_*
+.env
+.env.*
+*.har
+*.log
+
 # macOS and editors.
 .DS_Store
 .vscode/

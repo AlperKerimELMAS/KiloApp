@@ -8,7 +8,8 @@
 //! and only those, into WebKit's store for the player helper, prints them
 //! (one per line) for the app, and exits. The window keeps its cookies in
 //! memory, so Google's account session ends with it and never touches the
-//! disk. The app reads the output with `parse_output`.
+//! disk. The app reads the output with `parse_output`; the helper won't
+//! print to a terminal.
 //!
 //! `--prune-helper`: deletes everything WebKit stores for Kilo except
 //! YouTube's (older versions kept the whole Google session).
@@ -16,7 +17,7 @@
 //! `--sign-out-helper`: deletes everything WebKit stores for Kilo.
 
 use std::cell::{Cell, RefCell};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::ptr::NonNull;
 use std::rc::Rc;
 
@@ -67,8 +68,9 @@ define_class!(
             // SAFETY: a live frame, on the main thread.
             let main_frame = frame.as_deref().map(|f| unsafe { f.isMainFrame() });
             let allowed = match main_frame {
-                // The sign-in page's own frames (reCAPTCHA, say).
-                Some(false) => true,
+                // The sign-in page's own frames: reCAPTCHA, say, and blank
+                // ones (`about:`) it scripts.
+                Some(false) => matches!(scheme.as_str(), "https" | "about"),
                 Some(true) => scheme == "https" && is_sign_in_host(&host),
                 // A new window: there are none.
                 None => false,
@@ -130,6 +132,12 @@ fn scheme_and_host(url: &NSURL) -> (String, String) {
 }
 
 pub fn run() -> ! {
+    // What this prints is the session, for Kilo to read through a pipe. Run
+    // by hand, it would land in a terminal and its scrollback.
+    if std::io::stdout().is_terminal() {
+        eprintln!("kilo: --login-helper is for Kilo to start; use Sign In instead");
+        std::process::exit(2);
+    }
     let mtm = MainThreadMarker::new().expect("main thread");
     strings::init();
     exit_with_parent();
@@ -254,6 +262,12 @@ fn keep_youtube_cookies(web_view: &WKWebView) {
     let done = RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
         // SAFETY: as above.
         let cookies = unsafe { cookies.as_ref() };
+        for c in cookies.iter() {
+            // Names and lifetimes only, never values. (Google gives
+            // youtube.com's copies of the session 7 days, its own 400.)
+            let days = c.expiresDate().map(|d| d.timeIntervalSinceNow() / 86_400.0);
+            crate::debug::trace(|| format!("sign-in: cookie {} {} {days:.1?} days", c.domain(), c.name()));
+        }
         let youtube: Vec<Retained<NSHTTPCookie>> = cookies.iter().filter(|c| is_youtube_domain(&c.domain().to_string())).collect();
         let report: Rc<Vec<Cookie>> = Rc::new(
             youtube

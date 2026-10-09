@@ -3,6 +3,34 @@
 What changed in each version of Kilo. The measurements behind the main
 decisions are in [`ARCHITECTURE.md`](ARCHITECTURE.md#decisions-measured).
 
+## Unreleased
+
+### Fixed
+
+- **A session YouTube no longer takes is noticed.** When it ends (signed
+  out at Google, or its week is up), YouTube keeps answering, as to a
+  guest, with no error. Kilo went on browsing as a guest: an empty
+  Library, no account photo. Now pages, search and the account check (at
+  every launch) notice it, and a "Sign in again" screen says what
+  happened. The player won't play for a guest either.
+
+### Security
+
+- Sign Out waits for a page or thumbnail still being written before it
+  deletes Kilo's files, so nothing of the account can come back after it.
+  It also says so when it couldn't look for WebKit's leftover copies of
+  the cookie file (it used to count that as done).
+- The sign-in window shows only the hosts Google's sign-in uses (an exact
+  list, from a real sign-in), and its frames only https and blank ones.
+  The rest of google.com, where anyone can publish a page (Sites, Docs…),
+  opens in the browser.
+- Cookies and sessions printed for debugging leave out their values, and
+  the sign-in helper won't print the session to a terminal.
+- `kilo-spike-web login` keeps only YouTube's cookies, like the app (it
+  stored the whole Google account session).
+- `.gitignore` keeps cookie files, environment files, logs and HAR
+  captures out of commits.
+
 ## 0.3.0 (2026-10-09)
 
 The first public release.
