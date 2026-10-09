@@ -169,10 +169,10 @@ define_class!(
             // (No early returns: `define_class!` converts only the last
             // expression to Objective-C's BOOL.)
             let action = (item.action() == Some(sel!(shortcut:))).then(|| crate::keys::action(item.tag())).flatten();
-            if action == Some(kilo_core::shortcuts::Action::Mute) {
+            if action == Some(crate::shortcuts::Action::Mute) {
                 item.setState(if app::is_muted() { NSControlStateValueOn } else { NSControlStateValueOff });
             }
-            if action == Some(kilo_core::shortcuts::Action::ToggleSidebar) {
+            if action == Some(crate::shortcuts::Action::ToggleSidebar) {
                 let title = if crate::settings::sidebar_collapsed() { S::ExpandSidebar } else { S::CollapseSidebar };
                 item.setTitle(&NSString::from_str(t(title)));
             }
@@ -181,7 +181,7 @@ define_class!(
             let mtm = MainThreadMarker::new().expect("main thread");
             action.is_none()
                 || !crate::keys::typing_key(mtm)
-                || action.and_then(kilo_core::shortcuts::shown).is_some_and(kilo_core::shortcuts::Shortcut::while_typing)
+                || action.and_then(crate::shortcuts::shown).is_some_and(crate::shortcuts::Shortcut::while_typing)
         }
     }
 

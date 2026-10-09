@@ -20,7 +20,6 @@ use std::io::Write;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
-use crate::strings::{self, S, t};
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchTime};
 use kilo_core::auth::{Cookie, is_sign_in_host, is_youtube_domain, parse_binary_cookies};
@@ -36,6 +35,8 @@ use objc2_web_kit::{
     WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView, WKWebViewConfiguration,
     WKWebsiteDataRecord, WKWebsiteDataStore,
 };
+
+use crate::strings::{self, S, t};
 
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F";
 

@@ -1,14 +1,14 @@
-//! Keyboard shortcuts on macOS (`kilo_core::shortcuts`). The menus carry
+//! AppKit's side of the keyboard shortcuts (`shortcuts`). The menus carry
 //! and show them; the focus sink hears the ones a menu doesn't (when nothing
 //! is being typed). While the search field has the focus, the menus let the
 //! arrows and plain keys through to it (`Actions::validateMenuItem:`).
 
-use kilo_core::shortcuts::{self, Action, Key, Mods, SEEK_STEP, Shortcut, VOLUME_STEP};
 use objc2::{ClassType, MainThreadMarker};
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSText};
 use objc2_foundation::NSObjectProtocol;
 
 use crate::app::{self, Route};
+use crate::shortcuts::{self, Action, Key, Mods, SEEK_STEP, Shortcut, VOLUME_STEP};
 
 /// The key and modifiers of a key-down `event`.
 fn key_of(event: &NSEvent) -> Option<(Key, Mods)> {
@@ -29,9 +29,9 @@ fn key_of(event: &NSEvent) -> Option<(Key, Mods)> {
         c => Key::Char(c),
     };
     let mods = Mods {
-        primary: flags.contains(NSEventModifierFlags::Command),
+        command: flags.contains(NSEventModifierFlags::Command),
         shift: flags.contains(NSEventModifierFlags::Shift),
-        alt: flags.contains(NSEventModifierFlags::Option),
+        option: flags.contains(NSEventModifierFlags::Option),
         control: flags.contains(NSEventModifierFlags::Control),
     };
     Some((key, mods))
@@ -111,9 +111,9 @@ pub fn key_equivalent(shortcut: &Shortcut) -> (String, NSEventModifierFlags) {
     };
     let mut mods = NSEventModifierFlags::empty();
     for (on, flag) in [
-        (shortcut.mods.primary, NSEventModifierFlags::Command),
+        (shortcut.mods.command, NSEventModifierFlags::Command),
         (shortcut.mods.shift, NSEventModifierFlags::Shift),
-        (shortcut.mods.alt, NSEventModifierFlags::Option),
+        (shortcut.mods.option, NSEventModifierFlags::Option),
         (shortcut.mods.control, NSEventModifierFlags::Control),
     ] {
         if on {

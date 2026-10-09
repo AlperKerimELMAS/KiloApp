@@ -1,7 +1,6 @@
 //! The menu bar and the account button's menu. Their keyboard shortcuts come
-//! from `kilo_core::shortcuts`.
+//! from `shortcuts`.
 
-use kilo_core::shortcuts::{self, Action};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{MainThreadMarker, MainThreadOnly, sel};
@@ -10,11 +9,12 @@ use objc2_foundation::NSString;
 
 use super::actions;
 use crate::settings::{self, Appearance, Language};
+use crate::shortcuts::{self, Action};
 use crate::strings::{S, t};
 
 /// The menu bar: app (with sign in or out), edit (so copy and paste work in
 /// the search field), view (sections, appearance, language), playback and
-/// window. Shortcuts come from `kilo_core::shortcuts`.
+/// window. Shortcuts come from `shortcuts`.
 pub fn install_menu(signed_in: bool, mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
     let bar = NSMenu::new(mtm);

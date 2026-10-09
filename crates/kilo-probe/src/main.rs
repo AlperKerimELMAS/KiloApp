@@ -13,8 +13,8 @@ use kilo_probe::{Sample, find_by_name, sample_each, total, used_between};
 
 const USAGE: &str = "usage: kilo-probe <pid|process-name> [-i SECS] [-d SECS] [--csv FILE] [--breakdown | --list]
 
-Samples the process tree's footprint (Activity Monitor / Task Manager / PSS),
-CPU as % of one core, and wakeups per second.
+Samples the process tree's footprint (as Activity Monitor shows it), CPU as
+% of one core, and wakeups per second.
   -i SECS     sampling interval (default 1)
   -d SECS     stop after this long and print a summary (default: until exit)
   --csv FILE  also write every sample to FILE
@@ -122,25 +122,19 @@ fn main() -> ExitCode {
         let wall_ns = at.duration_since(prev_at).as_nanos().max(1) as f64;
         let (cpu_ns, woke) = used_between(&prev, &each);
         let cpu_pct = cpu_ns as f64 / wall_ns * 100.0;
-        let wakeups = woke.map(|w| w as f64 / wall_ns * 1e9);
+        let wakeups = woke as f64 / wall_ns * 1e9;
         let t = at.duration_since(start).as_secs_f64();
         stats.add(&now, cpu_pct);
 
         println!(
-            "t={t:7.1}s  footprint {:8}  (peak {:8})  rss {:8}  cpu {cpu_pct:5.1}%  wakeups {:>6}  procs {procs}",
+            "t={t:7.1}s  footprint {:8}  (peak {:8})  rss {:8}  cpu {cpu_pct:5.1}%  wakeups {:>4.0}/s  procs {procs}",
             mb(now.footprint),
             mb(stats.peak),
             mb(now.resident),
-            wakeups.map_or("-".into(), |w| format!("{w:.0}/s")),
+            wakeups,
         );
         if let Some(w) = csv.as_mut() {
-            let _ = writeln!(
-                w,
-                "{t:.3},{},{},{cpu_pct:.3},{},{procs}",
-                now.footprint,
-                now.resident,
-                wakeups.map_or(String::new(), |w| format!("{w:.1}"))
-            );
+            let _ = writeln!(w, "{t:.3},{},{},{cpu_pct:.3},{wakeups:.1},{procs}", now.footprint, now.resident,);
         }
 
         prev = each;
@@ -170,9 +164,8 @@ fn print_breakdown(roots: &[u32], first: &HashMap<u32, (Instant, Sample)>) {
         let (since, start) = first.get(&pid).copied().unwrap_or((Instant::now(), s));
         let wall_ns = since.elapsed().as_nanos().max(1) as f64;
         let cpu = s.cpu_ns.saturating_sub(start.cpu_ns) as f64 / wall_ns * 100.0;
-        let wakeups =
-            s.wakeups.zip(start.wakeups).map_or("-".into(), |(n, p)| format!("{:.1}/s", n.saturating_sub(p) as f64 / wall_ns * 1e9));
-        println!("{pid:>7}  {name:<40} {:>10}  {cpu:5.1}%  {wakeups:>8}", mb(s.footprint));
+        let wakeups = s.wakeups.saturating_sub(start.wakeups) as f64 / wall_ns * 1e9;
+        println!("{pid:>7}  {name:<40} {:>10}  {cpu:5.1}%  {wakeups:>6.1}/s", mb(s.footprint));
     }
 }
 

@@ -1,8 +1,8 @@
 # Architecture
 
-How Kilo is put together, for anyone about to change it. Why each piece is
-the way it is (with the measurements) is in [`PLAN.md`](PLAN.md); the
-project's history and status are in [`HANDOFF.md`](HANDOFF.md).
+How Kilo is put together, for anyone about to change it, and why each
+piece is the way it is: the measurements behind the decisions are at the
+end ([Decisions, measured](#decisions-measured)).
 
 ## One binary, five roles
 
@@ -30,17 +30,17 @@ up after 15 seconds.
 
 ## Crates
 
-| Crate | Platforms | What it holds |
-|---|---|---|
-| [`kilo-core`](../crates/kilo-core) | all | YouTube Music's web API (`client`), HTTP on the OS's TLS (`http`), the sign-in session (`auth`), parsers (`parse`) and models (`model`), the queue, the thumbnail policy (`image`); and what every front end shares: words (`strings`), colors (`style`), keyboard shortcuts (`shortcuts`) |
-| [`kilo-player`](../crates/kilo-player) | all (helper: macOS) | The player helper's line protocol (`protocol`), the app's side of it (`host`), and the helper itself (`helper/mac.rs`) |
-| [`kilo-mac`](../crates/kilo-mac) | macOS | The app: state (`app/`), views (`ui/`), images, page cache, sign-in and data helpers (`login.rs`), paths, settings, developer switches |
-| [`kilo-probe`](../crates/kilo-probe) | all | Measures memory and CPU like the OS task managers; no dependencies |
-| [`kilo-spike-web`](../crates/kilo-spike-web), [`kilo-ui-bench`](../crates/kilo-ui-bench) | macOS | Measurement labs behind the decisions in `PLAN.md`; not part of the app |
+| Crate | What it holds |
+|---|---|
+| [`kilo-core`](../crates/kilo-core) | YouTube Music's web API (`client`), HTTP on macOS's TLS (`http`), the sign-in session (`auth`), parsers (`parse`) and models (`model`), the queue, the thumbnail policy (`image`). No UI code |
+| [`kilo-player`](../crates/kilo-player) | The player helper's line protocol (`protocol`), the app's side of it (`host`), and the helper itself (`helper.rs`) |
+| [`kilo-mac`](../crates/kilo-mac) | The app: state (`app/`), views (`ui/`, with the colors in `ui/theme.rs`), words (`strings.rs`), keyboard shortcuts (`shortcuts.rs`, and AppKit's side in `keys.rs`), images, page cache, sign-in and data helpers (`login.rs`), paths, settings, developer switches |
+| [`kilo-probe`](../crates/kilo-probe) | Measures memory and CPU like Activity Monitor; no dependencies |
+| [`kilo-spike-web`](../crates/kilo-spike-web), [`kilo-ui-bench`](../crates/kilo-ui-bench) | Measurement labs behind the [decisions below](#decisions-measured); not part of the app |
 
 `kilo-mac` depends on `kilo-core` and `kilo-player`; `kilo-player` and
-`kilo-probe` depend on neither. The front ends for Windows and Linux are
-meant to reuse `kilo-core` and `kilo-player` as they are.
+`kilo-probe` depend on neither. `kilo-core` uses neither AppKit nor
+WebKit, so its tests run without a window.
 
 ## The app
 
@@ -189,7 +189,7 @@ is visible. A track that hasn't started 30 seconds after it was asked for
 is given up with a message. Five minutes after playback stops, the helper
 is shut down; the next play starts a fresh one where playback left off.
 
-**Inside the helper** (`kilo-player/src/helper/mac.rs`), a `WKWebView`
+**Inside the helper** (`kilo-player/src/helper.rs`), a `WKWebView`
 runs m.youtube.com's player, the lightest page that runs YouTube's full
 player, set up for the smallest footprint measured:
 
@@ -253,8 +253,9 @@ layers (`ui/bar.rs`): `NSSlider` would start a 40 MB system service. An
 invisible `FocusSink` holds the keyboard focus, so the search field (whose
 focus starts the 11 MB AutoFill service) is focused only when asked for.
 
-Keyboard shortcuts come from `kilo_core::shortcuts`: menu items carry the
-ones they show, and the focus sink hears the rest (Space, M, the arrows).
+Keyboard shortcuts come from one table (`shortcuts.rs`): menu items carry
+the ones they show, and the focus sink hears the rest (Space, M, the
+arrows; `keys.rs`).
 While the search field has the focus, plain keys and the arrows go to the
 text (`validateMenuItem:` in `ui/actions.rs`).
 
@@ -276,17 +277,65 @@ separate install.
 Files are written atomically (to a temporary file, then renamed), and only
 if the account they belong to is still the current one.
 
-## Porting to Windows and Linux
+## Decisions, measured
 
-What carries over as it is: `kilo-core` (API, parsers, queue, session,
-words, colors, shortcuts), `kilo-player`'s protocol and host, and
-`kilo-probe`, which already measures on all three. What each platform
-needs:
+Every choice above was measured with `kilo-probe` on one Mac (Apple
+Silicon, macOS 27), launched as an `.app` with `open` so macOS charges its
+system services to it. Footprint is what Activity Monitor shows.
 
-- a native front end (Win32 with Direct2D on Windows, GTK on Linux),
-  following the same rules: lazy pages, exact-size images, no work while
-  idle;
-- a player helper hosting the same page in the platform's web view
-  (WebView2, WebKitGTK), with the same bridge and the same guards;
-- a sign-in helper, and a way to read the web view's cookies;
-- media keys through SMTC (Windows) and MPRIS (Linux).
+### Playing: YouTube's player, hidden
+
+Kilo doesn't decode media itself (a ground rule), so the question was
+which of YouTube's own pages plays music for the least. The page alone, in
+a hidden `WKWebView` (`crates/kilo-spike-web`), playing:
+
+| Page | Footprint |
+|---|---|
+| music.youtube.com | 518 MB |
+| music.youtube.com, in Lockdown Mode | 345 MB |
+| m.youtube.com | 200 MB |
+| m.youtube.com, in Lockdown Mode, in a 128×72 view (the 144p stream) | **113–122 MB** |
+| the same without Lockdown Mode (JavaScript JIT on) | 200 MB |
+
+- **In a helper process.** After its web view is gone, WebKit leaves about
+  48 MB in the process that loaded it. The helper quits five minutes after
+  playback stops, and then Kilo is back to about 30 MB; playing again
+  takes about 2 s.
+- **Song versions of music videos.** m.youtube.com always streams a video
+  track, even hidden (music.youtube.com streams audio only, but costs
+  398 MB). A song's "video" is a still picture: playing a music video's
+  song version took 3.0 MB/min down to 1.8 MB/min (−41%).
+- **Hiding the page's own interface** (CSS) saves about 10% of its memory;
+  hiding the video element saves compositing (17 → 10 wakeups a second),
+  though WebKit still decodes it.
+- Doesn't help: WebKit's "suspend" scheduling (a page that has played
+  media keeps running) and hiding the window (same CPU).
+
+### The UI
+
+| Decision | Measured |
+|---|---|
+| AppKit, not a cross-platform toolkit | The same window: AppKit 27 MB, Slint's software renderer 84 MB, Slint's GPU renderer 171 MB (`crates/kilo-ui-bench`) |
+| No `NSSlider` (`ui/bar.rs` instead) | On macOS 27 it starts Metal's shader compiler service: +40 MB, and +5 MB in the app |
+| An invisible `FocusSink` holds the focus | A focused text field starts the AutoFill service: +11 MB |
+| Lazy pages, laid out by hand | Views for whole pages cost about 24 MB: creating only what's near the screen took the UI from 61 to 37 MB |
+| Thumbnails decoded into IOSurfaces | A `CGImage` as layer contents is copied: Home's thumbnails took 6.2 MB, now 3.4 MB. Images nothing shows are purgeable (up to 16 MB, not counted) |
+| The window is released when closed | 29–38.5 MB → 26.6–27.6 MB with the window closed |
+| The progress timer runs only while the window is visible | Playing with the window closed: 0.3% → 0.0% CPU, 3.5 → 0.2 wakeups a second |
+| One plain frame color: no blur, no Liquid Glass, no shadows | Behind-window blur +0.2 MB, `NSGlassEffectView` +1.2 MB per element, layer shadows +0.4 MB, a clipping panel +0.4 MB. Without the blur and the system search bezel, an album page went from 29.2–29.7 to 28.2–28.5 MB |
+| A width change re-frames the page | Per change: Home 3.9 → 0.8 ms, an album 3.9 → 0.2 ms |
+
+### Network and startup
+
+| Decision | Measured |
+|---|---|
+| A field mask on "up next" requests (`X-Goog-FieldMask`) | A radio: 800 KB → 110 KB of JSON (36 → 8 KB on the wire); the account: 5.6 KB → 0.4 KB |
+| Thumbnails at their exact size, JPEG at quality 75 or WebP | 33–55% smaller, no visible difference |
+| The page config read from the first 64 KB of music.youtube.com | Instead of 549 KB, once a day |
+| Pages cached on disk as YouTube sent them | Home on screen 0.93–1.05 s → 0.15–0.17 s after launch |
+| Fresh cached pages (under 30 minutes) aren't fetched again | Swapping in a refetched page right after the cached one cost 2–4 MB of heap fragmentation |
+| HTTP buffers of 16 KB | ureq's default, 128 KB each way per connection, kept 1.5 MB alive |
+| `opt-level = "z"` | The binary 1,624 → 1,165 KB, with the same startup and memory |
+
+The comparison with YouTube Music in Chrome is in
+[`COMPARISON.md`](COMPARISON.md).

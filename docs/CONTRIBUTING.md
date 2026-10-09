@@ -5,9 +5,8 @@ Music client we can build, and a few rules that come with it. Please read
 this page before you start: a change that breaks a ground rule won't be
 merged, however good it is otherwise.
 
-For how the code fits together, read [`ARCHITECTURE.md`](ARCHITECTURE.md).
-For why it is the way it is, [`PLAN.md`](PLAN.md) has every
-decision with the measurement behind it.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) says how the code fits together, and
+why it is the way it is, with the measurement behind each decision.
 
 ## Ground rules
 
@@ -74,15 +73,11 @@ defaults delete io.github.example.kilotest
 ```sh
 cargo fmt --all
 cargo clippy --release --workspace --all-targets -- -D warnings
-rustup target add x86_64-pc-windows-msvc   # once
-cargo clippy --release --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 cargo test --workspace
 ```
 
-CI runs the same checks, plus the portable crates on Linux and a check of
-the dependencies against the [RustSec advisory database](https://rustsec.org).
-The Windows clippy run keeps the portable crates (`kilo-core`,
-`kilo-player`, `kilo-probe`) building for the front ends to come.
+CI runs the same checks, plus a check of the dependencies against the
+[RustSec advisory database](https://rustsec.org).
 
 In the pull request, say what you changed and why, how you tested it, and,
 for anything that could affect memory, CPU, network or disk, the numbers
@@ -90,9 +85,9 @@ before and after.
 
 ## Measuring
 
-`kilo-probe` measures memory and CPU the way each OS's task manager does
-(Activity Monitor's "Memory" on macOS), summed over a process tree, plus
-the system services macOS charges to the app.
+`kilo-probe` measures memory and CPU the way Activity Monitor does (its
+"Memory" column), summed over a process tree, plus the system services
+macOS charges to the app.
 
 ```sh
 cargo build --release -p kilo-probe
@@ -112,6 +107,11 @@ scripts/startup.sh dist/Kilo.app 4                          # when the window, H
 
 `--play` plays the track on your account, out loud: a muted player could
 measure differently.
+
+The measurement labs say how to run them at the top of their source:
+`crates/kilo-spike-web` (YouTube's player alone, in a hidden web view),
+`crates/kilo-ui-bench` (what AppKit's controls cost) and
+`crates/kilo-player/examples/session.rs` (the player helper, scripted).
 
 Some habits that keep numbers honest:
 
@@ -148,10 +148,12 @@ open -n -g -o /tmp/kilo.log --stderr /tmp/kilo.log \
   thing is for; one idea per line (`rustfmt.toml` allows 140 columns).
 - **Every `unsafe` block has a `// SAFETY:` comment** saying why it's sound
   (clippy enforces it).
-- **What every front end shares lives in `kilo-core`:** new UI text goes in
-  `kilo_core::strings`, in every language Kilo speaks (English and Turkish
-  today); colors in `kilo_core::style`; keyboard shortcuts in
-  `kilo_core::shortcuts`.
+- **Words, colors and shortcuts have one home each** in the app
+  (`crates/kilo-mac/src`): new UI text goes in `strings.rs`, in every
+  language Kilo speaks (English and Turkish today); colors in
+  `ui/theme.rs`; keyboard shortcuts in `shortcuts.rs`.
+- **`kilo-core` has no UI code:** it's the YouTube Music client (API,
+  parsing, models, the queue), tested without a window.
 - **Dependencies:** few, and each one has to justify its size. Prefer the
   OS's own facilities (Kilo uses the system's TLS, ImageIO, WebKit).
 - **Apple's bindings are trimmed:** the `objc2-*` crates have their default
@@ -217,13 +219,12 @@ Things that cost us time, mostly macOS behavior that isn't obvious:
 
 ## Adding a language
 
-Kilo's words are in `crates/kilo-core/src/strings.rs`, one line per phrase
-with a column per language. To add one, add a column to that table (and to
-the `strings!` macro that reads it) and a variant to `Language`, then teach
-the macOS front end to offer it:
-`settings::Language`, the language menu in `ui/menus.rs`, and
-`strings::init`. YouTube's own content follows through the `hl` Kilo asks
-for (`settings::content_language`).
+Kilo's words are in `crates/kilo-mac/src/strings.rs`, one line per phrase
+with a column per language. To add one, add a column to that table and to
+the `strings!` macro that reads it (with two languages, the choice is one
+flag, `TURKISH`), then offer it: `settings::Language`, the language menu in
+`ui/menus.rs`, and `strings::init`. YouTube's own content follows through
+the `hl` Kilo asks for (`settings::content_language`).
 
 ## Reporting bugs and vulnerabilities
 

@@ -1,3 +1,5 @@
+//! The macOS calls behind `kilo-probe`: libproc and rusage, all in libSystem.
+
 use std::ffi::{c_int, c_void};
 use std::io;
 use std::sync::OnceLock;
@@ -57,7 +59,7 @@ pub fn sample(pid: u32) -> io::Result<Sample> {
         footprint: ri.phys_footprint,
         resident: ri.resident_size,
         cpu_ns: ticks_to_ns(ri.user_time + ri.system_time),
-        wakeups: Some(ri.pkg_idle_wkups + ri.interrupt_wkups),
+        wakeups: ri.pkg_idle_wkups + ri.interrupt_wkups,
     })
 }
 

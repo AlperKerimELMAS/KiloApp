@@ -1,5 +1,6 @@
-//! Minimal blocking HTTPS on the OS's TLS stack. Callers run it on worker
-//! threads; the UI thread never blocks on the network.
+//! Minimal blocking HTTPS on macOS's own TLS (Security.framework, through
+//! native-tls). Callers run it on worker threads; the UI thread never
+//! blocks on the network.
 
 use std::io::Read;
 use std::sync::OnceLock;

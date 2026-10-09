@@ -8,21 +8,11 @@
 //! The helper hosts a hidden system web view running YouTube's mobile web
 //! player. Kilo never fetches, captures or decodes media itself.
 
+mod helper;
 pub mod host;
 pub mod protocol;
 
-#[cfg(target_os = "macos")]
-mod helper;
-
 /// Runs the helper side. Never returns.
-#[cfg(target_os = "macos")]
 pub fn run_helper() -> ! {
     helper::run()
-}
-
-/// Runs the helper side. Never returns.
-#[cfg(not(target_os = "macos"))]
-pub fn run_helper() -> ! {
-    eprintln!("kilo-player: the web view helper is macOS-only for now");
-    std::process::exit(2);
 }

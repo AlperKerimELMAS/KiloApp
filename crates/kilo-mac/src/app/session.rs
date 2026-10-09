@@ -171,6 +171,9 @@ fn fetch_account() {
 /// Shows the signed-in account's photo on the account button (a 36-point
 /// circle).
 pub(super) fn show_account() {
+    if crate::debug::hide_account() {
+        return;
+    }
     let Some(Some((avatar, button, photo, scale, id))) = with(|a| {
         let s = a.shell.as_ref()?;
         Some((s.avatar.clone(), s.avatar_button.clone(), a.account.as_ref()?.photo.clone()?, s.window.backingScaleFactor(), a.session))

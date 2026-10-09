@@ -6,8 +6,11 @@
 //!
 //! `session --player-helper` runs the helper side (spawned by the host).
 //! Started from a terminal, its XPC services are charged to the terminal, so
-//! run it from an `.app` bundle with `open` when measuring (docs/PLAN.md,
-//! "Tools").
+//! run it from an `.app` bundle with `open` when measuring: a bundle whose
+//! executable is `target/release/examples/session`, through
+//! `open -W -o out.txt KiloPlayer.app --args <idA> <idB>`. It plays only
+//! if that bundle's WebKit store is signed in: give it the bundle id of a
+//! `kilo-spike-web` bundle that ran `login`.
 
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver};
@@ -183,7 +186,7 @@ impl Session {
         let end = tree();
         let wall = at.elapsed().as_nanos() as f64;
         let cpu = end.cpu_ns.saturating_sub(start.cpu_ns) as f64 / wall * 100.0;
-        let wakeups = end.wakeups.zip(start.wakeups).map_or(0.0, |(e, s)| e.saturating_sub(s) as f64 / wall * 1e9);
+        let wakeups = end.wakeups.saturating_sub(start.wakeups) as f64 / wall * 1e9;
         let host = kilo_probe::sample(std::process::id()).map(|s| s.footprint).unwrap_or(0);
         self.line(&format!(
             "{label:<28} {}  peak {}  cpu {cpu:4.1}%  wakeups {wakeups:3.0}/s  host {}  helper events {events}",

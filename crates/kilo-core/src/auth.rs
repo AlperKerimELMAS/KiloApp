@@ -95,9 +95,9 @@ pub fn is_youtube_domain(domain: &str) -> bool {
 /// Whether the sign-in window may show `host`: Google's sign-in and the
 /// YouTube pages it leads back to (any google.com or youtube.com host), and
 /// Google's country domains, which sign-in may pass through to set their
-/// cookies (`accounts.google.com.tr`). Anything else opens in the browser:
-/// the window has no address bar, so it never shows a page the user can't
-/// tell apart from Google's.
+/// cookies (`accounts.google.com.br`, say). Anything else opens in the
+/// browser: the window has no address bar, so it never shows a page the
+/// user can't tell apart from Google's.
 pub fn is_sign_in_host(host: &str) -> bool {
     let host = host.to_ascii_lowercase();
     if under(&host, "google.com") || under(&host, "youtube.com") {
@@ -183,7 +183,7 @@ mod tests {
             "google.com",
             "accounts.youtube.com",
             "music.youtube.com",
-            "accounts.google.com.tr",
+            "accounts.google.com.br",
             "accounts.google.co.uk",
             "accounts.google.de",
         ] {

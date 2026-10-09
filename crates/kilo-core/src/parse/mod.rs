@@ -474,8 +474,8 @@ mod tests {
             "contents":[{"musicCarouselShelfRenderer":{
                 "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Listen again"}]}}},
                 "contents":[{"musicTwoRowItemRenderer":{
-                    "title":{"runs":[{"text":"HIZA"}]},
-                    "subtitle":{"runs":[{"text":"Album"},{"text":" \u2022 "},{"text":"2020"}]},
+                    "title":{"runs":[{"text":"Abbey Road"}]},
+                    "subtitle":{"runs":[{"text":"Album"},{"text":" \u2022 "},{"text":"1969"}]},
                     "thumbnailRenderer":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[
                         {"url":"https://lh3.googleusercontent.com/a=w60-h60","width":60,"height":60},
                         {"url":"https://lh3.googleusercontent.com/a=w226-h226","width":226,"height":226}]}}},
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(page.continuation.as_deref(), Some("TOKEN"));
         let Section::Cards { title, entries } = &page.sections[0] else { panic!("expected cards") };
         assert_eq!(&**title, "Listen again");
-        assert_eq!(&*entries[0].subtitle, "Album \u{2022} 2020");
+        assert_eq!(&*entries[0].subtitle, "Album \u{2022} 1969");
         assert_eq!(entries[0].target, Target::Browse { id: "MPREb_x".into(), params: None, kind: PageKind::Album });
         assert_eq!(entries[0].thumb.as_ref().unwrap().sized(100), "https://lh3.googleusercontent.com/a=w100-h100-l75-rj");
     }
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn carousels_of_song_rows_are_grids() {
         let row = r#"{"musicResponsiveListItemRenderer":{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song",
-            "navigationEndpoint":{"watchEndpoint":{"videoId":"DNB6LxIBJzc"}}}]}}}],"playlistItemData":{"videoId":"DNB6LxIBJzc"}}}"#;
+            "navigationEndpoint":{"watchEndpoint":{"videoId":"45cYwDMibGo"}}}]}}}],"playlistItemData":{"videoId":"45cYwDMibGo"}}}"#;
         let json = String::from(
             r#"{"contents":{"singleColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
                 {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Quick picks"}]}}},
@@ -512,21 +512,21 @@ mod tests {
     fn parses_album_tracks() {
         let json = br#"{"contents":{"twoColumnBrowseResultsRenderer":{
             "tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[{"musicResponsiveHeaderRenderer":{
-                "title":{"runs":[{"text":"HIZA"}]},"straplineTextOne":{"runs":[{"text":"Gazapizm"}]},
-                "secondSubtitle":{"runs":[{"text":"10 songs"}]}}}]}}}}],
+                "title":{"runs":[{"text":"Abbey Road"}]},"straplineTextOne":{"runs":[{"text":"The Beatles"}]},
+                "secondSubtitle":{"runs":[{"text":"17 songs"}]}}}]}}}}],
             "secondaryContents":{"sectionListRenderer":{"contents":[{"musicShelfRenderer":{"contents":[
                 {"musicResponsiveListItemRenderer":{
-                    "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Dayan",
-                        "navigationEndpoint":{"watchEndpoint":{"videoId":"DNB6LxIBJzc","playlistId":"OLAK5"}}}]}}}],
-                    "fixedColumns":[{"musicResponsiveListItemFixedColumnRenderer":{"text":{"runs":[{"text":"5:10"}]}}}],
-                    "playlistItemData":{"videoId":"DNB6LxIBJzc"}}}]}}]}}}}}"#;
+                    "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Come Together",
+                        "navigationEndpoint":{"watchEndpoint":{"videoId":"45cYwDMibGo","playlistId":"OLAK5"}}}]}}}],
+                    "fixedColumns":[{"musicResponsiveListItemFixedColumnRenderer":{"text":{"runs":[{"text":"4:20"}]}}}],
+                    "playlistItemData":{"videoId":"45cYwDMibGo"}}}]}}]}}}}}"#;
         let page = browse(json).unwrap();
         let header = page.header.unwrap();
-        assert_eq!((&*header.title, &*header.detail), ("HIZA", "Gazapizm • 10 songs"));
+        assert_eq!((&*header.title, &*header.detail), ("Abbey Road", "The Beatles • 17 songs"));
         let entry = &page.sections[0].entries()[0];
-        assert_eq!(entry.video_id(), Some("DNB6LxIBJzc"));
-        assert_eq!(&*entry.duration, "5:10");
-        assert_eq!(entry.target, Target::Play { video_id: "DNB6LxIBJzc".into(), playlist_id: Some("OLAK5".into()), music_video: false });
+        assert_eq!(entry.video_id(), Some("45cYwDMibGo"));
+        assert_eq!(&*entry.duration, "4:20");
+        assert_eq!(entry.target, Target::Play { video_id: "45cYwDMibGo".into(), playlist_id: Some("OLAK5".into()), music_video: false });
     }
 
     #[test]

@@ -167,9 +167,9 @@ mod tests {
 
     #[test]
     fn picks_smallest_fitting_video_thumbnail() {
-        let t = Thumb::new("https://i.ytimg.com/vi/wtXqClgroyY/hqdefault.jpg?sqp=abc", true);
-        assert_eq!(t.sized(300), "https://i.ytimg.com/vi_webp/wtXqClgroyY/mqdefault.webp");
-        assert_eq!(t.sized(96), "https://i.ytimg.com/vi_webp/wtXqClgroyY/mqdefault.webp");
-        assert_eq!(t.sized(568), "https://i.ytimg.com/vi_webp/wtXqClgroyY/sddefault.webp");
+        let t = Thumb::new("https://i.ytimg.com/vi/fJ9rUzIMcZQ/hqdefault.jpg?sqp=abc", true);
+        assert_eq!(t.sized(300), "https://i.ytimg.com/vi_webp/fJ9rUzIMcZQ/mqdefault.webp");
+        assert_eq!(t.sized(96), "https://i.ytimg.com/vi_webp/fJ9rUzIMcZQ/mqdefault.webp");
+        assert_eq!(t.sized(568), "https://i.ytimg.com/vi_webp/fJ9rUzIMcZQ/sddefault.webp");
     }
 }

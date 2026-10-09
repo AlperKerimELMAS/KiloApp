@@ -137,8 +137,8 @@ impl Bar {
     fn step(&self, up: bool) {
         let sign = if up { 1 } else { -1 };
         match self.ivars().kind {
-            Kind::Volume => crate::net::later(move || crate::app::change_volume(sign * i16::from(kilo_core::shortcuts::VOLUME_STEP))),
-            Kind::Progress => crate::net::later(move || crate::app::seek_by(f64::from(sign) * kilo_core::shortcuts::SEEK_STEP)),
+            Kind::Volume => crate::net::later(move || crate::app::change_volume(sign * i16::from(crate::shortcuts::VOLUME_STEP))),
+            Kind::Progress => crate::net::later(move || crate::app::seek_by(f64::from(sign) * crate::shortcuts::SEEK_STEP)),
         }
     }
 

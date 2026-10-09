@@ -1,6 +1,18 @@
+# Build output: Cargo's, and the app bundle packaging/macos/bundle.sh makes.
 /target
-*.csv
-.DS_Store
 /dist
-# Claude Code: personal settings (the shared instructions are .claude/CLAUDE.md)
-/.claude/settings.local.json
+
+# Samples kilo-probe writes with --csv.
+*.csv
+
+# macOS and editors.
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local, per-developer files: notes and AI assistant settings
+# (Claude Code's CLAUDE.md and settings), kept out of the project.
+/.claude/
+CLAUDE.local.md

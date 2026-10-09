@@ -512,11 +512,16 @@ impl PageView {
             row.addSubview(&n);
         }
         let right = if e.duration.is_empty() { 12.0 } else { 84.0 };
-        let title = frame_label(&e.title, 14.0, Weight::Medium, false, mtm);
-        title.setFrame(NSRect::new(NSPoint::new(x, 9.0), NSSize::new(width - x - right, 18.0)));
-        let subtitle = frame_label(&e.subtitle, 13.0, Weight::Regular, true, mtm);
-        subtitle.setFrame(NSRect::new(NSPoint::new(x, 29.0), NSSize::new(width - x - right, 17.0)));
-        for l in [&title, &subtitle] {
+        // A title alone (an album's tracks often have no subtitle) is
+        // centered, in line with the number and the duration.
+        let mut labels = vec![(frame_label(&e.title, 14.0, Weight::Medium, false, mtm), 9.0, 18.0)];
+        if e.subtitle.is_empty() {
+            labels[0].1 = 19.0;
+        } else {
+            labels.push((frame_label(&e.subtitle, 13.0, Weight::Regular, true, mtm), 29.0, 17.0));
+        }
+        for (l, y, h) in &labels {
+            l.setFrame(NSRect::new(NSPoint::new(x, *y), NSSize::new(width - x - right, *h)));
             // When the page's width changes, the row stretches its text.
             l.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
             row.addSubview(l);

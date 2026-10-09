@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Measures a Kilo.app the way docs/PLAN.md does: launched with `open` (so
-# macOS charges its XPC services to it), driven by KILO_SCENARIO, then
-# sampled with kilo-probe.
+# Measures a Kilo.app the way the numbers in docs/ were measured: launched
+# with `open` (so macOS charges its XPC services to it), driven by
+# KILO_SCENARIO, then sampled with kilo-probe.
 #
 #   scripts/measure.sh APP SCENARIO [SECONDS] [--env K=V ...]
 #       Runs SCENARIO, then samples the process tree for SECONDS (default

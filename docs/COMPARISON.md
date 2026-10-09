@@ -3,7 +3,7 @@
 Measured on 2026-10-07 on one machine: MacBook (Apple Silicon, 16 GB),
 macOS 27.0.1, Retina display, YouTube Music Premium. Both apps were playing
 music. Kilo was measured twice the same day: as first built (0.1), and after
-the efficiency pass (0.2, `docs/PLAN.md`, "Efficiency pass"). Chrome wasn't
+the efficiency pass (0.2, [`CHANGELOG.md`](CHANGELOG.md)). Chrome wasn't
 re-measured.
 
 ## Results
@@ -90,3 +90,10 @@ media bytes. The gap to Chrome's figure isn't fully attributed yet.
   - Chrome's pause and window-closed states weren't measured, because Chrome
     couldn't be controlled from the test.
   - One machine, one run each.
+
+## Since then
+
+Kilo 0.3 (same Mac, `scripts/measure.sh`, launches alternating with the
+build before it): **28.7–28.8 MB** with the window open on Home, 0% CPU
+(2026-10-09); playing, 142.6–144 MB (2026-10-08). Chrome wasn't measured
+again.

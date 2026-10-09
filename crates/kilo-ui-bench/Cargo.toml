@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 kilo-probe = { path = "../kilo-probe" }
 
-[target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true

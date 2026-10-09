@@ -4,10 +4,6 @@
 //! sized by a constraint elsewhere), then sleeps so `heap` can count
 //! `NSAutoresizingMaskLayoutConstraint`s.
 
-#[cfg(not(target_os = "macos"))]
-fn main() {}
-
-#[cfg(target_os = "macos")]
 fn main() {
     use objc2::MainThreadMarker;
     use objc2::MainThreadOnly;

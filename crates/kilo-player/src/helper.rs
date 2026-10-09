@@ -1,5 +1,6 @@
-//! macOS helper: a WKWebView running m.youtube.com's player, tuned for the
-//! smallest footprint we measured (see docs/PLAN.md, "Playback").
+//! The helper side: a hidden WKWebView running m.youtube.com's player,
+//! tuned for the smallest footprint we measured (docs/ARCHITECTURE.md,
+//! "Decisions, measured").
 
 use std::cell::RefCell;
 use std::io::{BufRead, Write};

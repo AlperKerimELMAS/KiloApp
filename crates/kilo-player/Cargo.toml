@@ -9,7 +9,7 @@ publish.workspace = true
 [lints]
 workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[dependencies]
 block2.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true

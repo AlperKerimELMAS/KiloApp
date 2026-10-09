@@ -1,6 +1,6 @@
 [package]
 name = "kilo-probe"
-description = "Samples a process tree's memory and CPU using the numbers OS task managers show"
+description = "Samples a process tree's memory and CPU as Activity Monitor shows them"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,5 +9,5 @@ publish.workspace = true
 [lints]
 workspace = true
 
-# Deliberately dependency-free: platform APIs are declared by hand in src/sys/.
+# Deliberately dependency-free: the macOS calls are declared by hand in src/sys.rs.
 [dependencies]

@@ -435,7 +435,8 @@ pub fn play_item(item: u32) {
     );
 }
 
-/// Developer switch: scrolls the page to `y` points, or to its end.
+/// Scrolls the page to `y` points, or to its end (Home and End, and a
+/// developer switch).
 pub fn scroll_to(y: Option<f64>) {
     with(|a| {
         if let Some(v) = &a.view {

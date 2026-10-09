@@ -15,7 +15,7 @@ window, several launches each. Write "none" if it can't. -->
 
 **Checklist**
 
-- [ ] `cargo fmt --all`, clippy (macOS and `--target x86_64-pc-windows-msvc`) and `cargo test --workspace` pass
+- [ ] `cargo fmt --all`, `cargo clippy` and `cargo test --workspace` pass
 - [ ] Follows the ground rules: no media handling, no ad blocking, no downloads, no YouTube branding
-- [ ] New UI text is in `kilo_core::strings`, in every language
+- [ ] New UI text is in `crates/kilo-mac/src/strings.rs`, in every language
 - [ ] Docs updated where behavior changed (`README.md`, `docs/`)

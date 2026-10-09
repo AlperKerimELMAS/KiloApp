@@ -8,6 +8,8 @@
 //! - `KILO_NO_ACTIVATE=1`: doesn't bring the app to the front at launch.
 //! - `KILO_IDLE=SECS`: shuts the player helper down after SECS paused
 //!   (instead of 5 minutes).
+//! - `KILO_HIDE_ACCOUNT=1`: the account button keeps its icon instead of
+//!   the account's photo (for screenshots others will see).
 //! - `KILO_SCENARIO=STEP,STEP,…`: a scripted session, run once the app is
 //!   signed in or on the sign-in screen. Each step is logged to stderr with
 //!   the time since launch, and so are player events and startup
@@ -18,7 +20,8 @@
 //!     click on a music video's card), `playcard:N` (the play button of
 //!     the page's item N), `playall`, `shuffleall`, `pause` (play/pause),
 //!     `next`, `volume:0-100` (`volume:0` first to test silently).
-//!   - Pages: `browse:ID`, `scroll:Y` or `scroll:end`, `state` (logs the
+//!   - Pages: `browse:ID`, `item:N` (clicks the page's item N, as a card
+//!     or row), `scroll:Y` or `scroll:end`, `state` (logs the
 //!     page's sections and the queue), `relayout:N` (resizes the window N
 //!     times; logs the page's average relayout time).
 //!   - Window: `close`, `open`, `snap` (a snapshot in 4 s, with
@@ -54,6 +57,11 @@ thread_local! {
 pub fn idle_shutdown() -> Option<std::time::Duration> {
     let secs: f64 = std::env::var("KILO_IDLE").ok()?.parse().ok()?;
     std::time::Duration::try_from_secs_f64(secs).ok()
+}
+
+/// `KILO_HIDE_ACCOUNT`: no account photo on the account button.
+pub fn hide_account() -> bool {
+    std::env::var_os("KILO_HIDE_ACCOUNT").is_some()
 }
 
 pub fn activate_on_launch() -> bool {
@@ -305,6 +313,10 @@ fn step(steps: Vec<String>, i: usize) {
         }
         "snap" => {
             crate::app::snapshot(arg == "now");
+            0.0
+        }
+        "item" => {
+            crate::app::activate(arg.parse().unwrap_or(0));
             0.0
         }
         "playcard" => {
