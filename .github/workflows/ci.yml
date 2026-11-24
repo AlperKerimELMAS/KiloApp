@@ -4,9 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Weekly, so a new advisory against a dependency shows up without a push.
-  schedule:
-    - cron: "0 6 * * 1"
+  # No weekly schedule: Kilo is no longer maintained, so CI runs only when
+  # the code changes. Run `cargo audit` by hand before picking it up again.
 
 # The workflow only reads the repository.
 permissions:
